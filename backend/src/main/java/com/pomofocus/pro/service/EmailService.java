@@ -95,7 +95,7 @@ public class EmailService {
                         <td style="padding: 8px 36px 32px 36px;">
                           <h1 style="font-size: 22px; font-weight: 700; color: #111318; margin: 0 0 12px 0; letter-spacing: -0.3px;">Verify your email address</h1>
                           <p style="font-size: 14px; line-height: 22px; color: #62666f; margin: 0 0 24px 0;">
-                            Hi <strong style="color: #111318;">%s</strong>, thanks for getting started with Pomofocus Pro! Enter this 6-digit passcode in your browser to activate your account and start your focus sessions:
+                            Hi <strong style="color: #111318;">{{USERNAME}}</strong>, thanks for getting started with Pomofocus Pro! Enter this 6-digit passcode in your browser to activate your account and start your focus sessions:
                           </p>
 
                           <!-- Verification Code Card -->
@@ -103,7 +103,7 @@ public class EmailService {
                             <tr>
                               <td align="center" style="padding: 24px 16px;">
                                 <div style="font-family: 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 38px; font-weight: 800; letter-spacing: 10px; color: #3157f6; padding-left: 10px;">
-                                  %s
+                                  {{OTP_CODE}}
                                 </div>
                                 <div style="margin-top: 10px;">
                                   <span style="display: inline-block; background-color: #e8edff; color: #3157f6; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; border-radius: 20px; padding: 4px 12px; text-transform: uppercase;">
@@ -138,7 +138,9 @@ public class EmailService {
               </table>
             </body>
             </html>
-            """.formatted(username, otpCode);
+            """
+            .replace("{{USERNAME}}", username)
+            .replace("{{OTP_CODE}}", otpCode);
     }
 }
 
