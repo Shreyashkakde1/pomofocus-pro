@@ -13,6 +13,8 @@ jobs:
     name: Build Frontend & Backend
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -34,7 +36,7 @@ jobs:
       # Build Frontend SPA
       - name: Install Frontend Dependencies
         working-directory: ./frontend
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit
 
       - name: Build Frontend Production Bundle
         working-directory: ./frontend
@@ -45,7 +47,7 @@ jobs:
         working-directory: ./backend
         run: |
           chmod +x mvnw
-          ./mvnw clean package -DskipTests
+          ./mvnw clean package -DskipTests -B --no-transfer-progress
 
       # Save artifacts for deployment
       - name: Upload Frontend Artifact
@@ -55,6 +57,7 @@ jobs:
           path: frontend/dist/
           retention-days: 1
 
+      # Save artifacts for deployment
       - name: Upload Backend JAR Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -69,6 +72,7 @@ jobs:
     name: Deploy to VPS
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.ref == 'refs/heads/main'
 
     steps:
@@ -99,8 +103,12 @@ jobs:
 
           # 2. Pull latest git changes and restart Docker containers
           ssh -p $VPS_PORT $VPS_USER@$VPS_HOST "
+            set -e
             cd /var/www/pomofocus-pro || cd ~/projects/pomofocus-pro || exit 1
             git pull origin main
+            if [ -f .env.production ] && [ ! -f .env ]; then
+              cp .env.production .env
+            fi
             if command -v docker-compose >/dev/null 2>&1; then
               docker-compose -f docker-compose.prod.yml up -d --build
             else
