@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pomofocus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pomopro
+      POSTGRES_USER: pomouser
+      POSTGRES_PASSWORD: pomopass
+    ports:
+      - "5435:5432"
+    volumes:
+      - pomopro_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pomouser -d pomopro"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pomopro_pgdata:
+

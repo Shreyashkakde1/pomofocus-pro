@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-tercelet-bg text-tercelet-fg font-sans antialiased selection:bg-tercelet-brand selection:text-white;
+    min-height: 100vh;
+  }
+
+  /* Tercelet Minimalist Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(17, 19, 24, 0.14);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(17, 19, 24, 0.28);
+  }
+}
+
+/* Tercelet Card Styles */
+.tercelet-card {
+  @apply bg-white rounded-2xl border border-black/[0.08] shadow-card transition-all duration-200;
+}
+
+.tercelet-card-hover {
+  @apply hover:shadow-card-hover hover:border-black/[0.14] hover:-translate-y-0.5;
+}
+
+/* Proof Badge (Tercelet Lime Tag) */
+.badge-proof {
+  @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold tracking-wide bg-tercelet-proof text-tercelet-proofInk;
+}
+
+/* Brand Soft Pill */
+.badge-brand {
+  @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-tercelet-brandSoft text-tercelet-brand;
+}
+
+/* Coral Deficit Pill */
+.badge-coral {
+  @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-tercelet-coralSoft text-tercelet-coral;
+}

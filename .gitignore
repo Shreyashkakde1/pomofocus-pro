@@ -1,0 +1,49 @@
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Production build artifacts
+dist/
+dist-ssr/
+frontend/dist/
+frontend/dist-ssr/
+backend/target/
+*.jar
+*.war
+*.class
+
+# Maven
+backend/.mvn/wrapper/maven-wrapper.jar
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE & OS
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local database volumes (if mounted)
+postgres_data/
+
+# Internal planning and assessment documents
+IMPLEMENTATION_PLAN_V1.md
+SECURITY_ASSESSMENT.md
+
