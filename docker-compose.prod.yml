@@ -48,6 +48,8 @@ services:
       SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-465}
       SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:-resend}
       SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-onboarding@resend.dev}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Pomofocus Pro}
       JAVA_OPTS: "-Xms128m -Xmx384m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
     depends_on:
       pomofocus-postgres:
