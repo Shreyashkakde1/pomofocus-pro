@@ -59,7 +59,12 @@ npm run dev
 
 ---
 
-## 🔒 Security & Hardening Documentation
+## 📚 Project Documentation
 
-For the full OWASP/CWE security audit, threat model, vulnerability analysis, and completed P0/P1 defensive patches, see [SECURITY_ASSESSMENT.md](file:///home/shreyash/projects/pomofocus-pro/SECURITY_ASSESSMENT.md).
+All extended documentation and technical guides are organized in the [`docs/`](docs/) directory:
+
+- 🚀 [**Deployment Guide**](docs/DEPLOYMENT_GUIDE.md): VPS production setup, Nginx reverse proxy, Certbot SSL, and Docker Compose configuration.
+- 🔒 [**Security Assessment**](docs/SECURITY_ASSESSMENT.md): Full OWASP/CWE audit, threat model, vulnerability analysis, and hardening patches.
+- 📊 [**V2 Graphs Module Plan**](docs/V2_GRAPHS_MODULE_PLAN.md): Technical architecture and implementation plan for the upcoming Insights & Analytics Hub.
+- 📋 [**V1 Implementation Plan**](docs/IMPLEMENTATION_PLAN_V1.md): Initial specification and phase-by-phase build history.
 
