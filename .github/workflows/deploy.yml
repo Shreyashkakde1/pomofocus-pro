@@ -80,7 +80,7 @@ jobs:
 
       # Only runs if VPS_HOST and VPS_SSH_KEY are configured in GitHub Secrets
       - name: Deploy to VPS via SSH
-        if: "${{ env.VPS_HOST != '' }}"
+        if: "${{ secrets.VPS_HOST != '' }}"
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USERNAME }}
@@ -103,6 +103,11 @@ jobs:
           ssh -p $VPS_PORT $VPS_USER@$VPS_HOST "
             cd /var/www/pomofocus-pro || cd ~/projects/pomofocus-pro || exit 1
             git pull origin main
-            docker compose -f docker-compose.prod.yml up -d --build
+            if command -v docker-compose >/dev/null 2>&1; then
+              docker-compose -f docker-compose.prod.yml up -d --build
+            else
+              docker compose -f docker-compose.prod.yml up -d --build
+            fi
             echo '✅ Pomofocus Pro deployment completed successfully!'
           "
+
