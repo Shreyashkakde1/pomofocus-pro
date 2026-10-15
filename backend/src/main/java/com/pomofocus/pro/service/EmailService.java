@@ -45,9 +45,9 @@ public class EmailService {
 
             helper.setFrom(fromAddress, fromName);
             helper.setTo(toEmail);
-            helper.setSubject("⚡ [POMOFOCUS PRO] Your Verification Passcode: " + otpCode);
+            helper.setSubject(otpCode + " is your Pomofocus Pro verification code");
 
-            String htmlContent = buildCyberpunkOtpEmailTemplate(username, otpCode);
+            String htmlContent = buildOtpEmailTemplate(username, otpCode);
             helper.setText(htmlContent, true);
 
             mailSender.send(message);
@@ -59,31 +59,83 @@ public class EmailService {
         }
     }
 
-    private String buildCyberpunkOtpEmailTemplate(String username, String otpCode) {
+    private String buildOtpEmailTemplate(String username, String otpCode) {
         return """
             <!DOCTYPE html>
-            <html>
+            <html lang="en">
             <head>
               <meta charset="utf-8">
-              <style>
-                body { margin: 0; padding: 0; background-color: #08090d; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; color: #e2e8f0; }
-                .container { max-width: 540px; margin: 40px auto; background: #0f131f; border: 1px solid #1e293b; border-radius: 12px; padding: 32px; box-shadow: 0 0 25px rgba(0, 243, 255, 0.15); }
-                .logo { font-size: 20px; font-weight: 800; letter-spacing: 2px; color: #00f3ff; text-transform: uppercase; margin-bottom: 24px; }
-                .title { font-size: 24px; font-weight: 700; margin-bottom: 12px; color: #f8fafc; }
-                .desc { font-size: 14px; line-height: 1.6; color: #94a3b8; margin-bottom: 24px; }
-                .otp-box { background: rgba(0, 243, 255, 0.05); border: 2px solid #00f3ff; border-radius: 8px; padding: 20px; text-align: center; font-size: 36px; font-weight: 900; letter-spacing: 10px; color: #00f3ff; margin-bottom: 24px; text-shadow: 0 0 10px rgba(0, 243, 255, 0.5); }
-                .notice { font-size: 12px; color: #64748b; margin-top: 24px; border-top: 1px solid #1e293b; padding-top: 16px; }
-              </style>
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Your Pomofocus Pro Verification Code</title>
             </head>
-            <body>
-              <div class="container">
-                <div class="logo">⚡ POMOFOCUS PRO HUD</div>
-                <div class="title">Verify Your Operator Terminal</div>
-                <div class="desc">Greetings <strong>%s</strong>, enter the 6-digit authorization code below to verify your account and activate your target budget telemetry:</div>
-                <div class="otp-box">%s</div>
-                <div class="desc">This passcode will expire in <strong>15 minutes</strong>. If you did not initialize this request, no action is needed.</div>
-                <div class="notice">POMOFOCUS PRO // Cyberpunk Productivity Engine // High-Precision Telemetry</div>
-              </div>
+            <body style="margin: 0; padding: 0; background-color: #f5f3ee; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #111318;">
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f5f3ee; padding: 40px 16px;">
+                <tr>
+                  <td align="center">
+                    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 520px; background-color: #ffffff; border-radius: 20px; border: 1px solid #e5e3dc; box-shadow: 0 4px 20px rgba(17, 19, 24, 0.05); overflow: hidden;">
+                      
+                      <!-- Brand Header -->
+                      <tr>
+                        <td style="padding: 36px 36px 20px 36px;">
+                          <table border="0" cellspacing="0" cellpadding="0">
+                            <tr>
+                              <td style="width: 36px; height: 36px; background-color: #111318; border-radius: 10px; text-align: center; vertical-align: middle;">
+                                <span style="font-size: 18px; font-weight: 800; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; line-height: 36px;">P</span><span style="display: inline-block; width: 3px; height: 16px; background-color: #c9f45b; border-radius: 2px; vertical-align: middle; margin-left: 2px;"></span>
+                              </td>
+                              <td style="padding-left: 12px; font-size: 20px; font-weight: 800; color: #111318; letter-spacing: -0.5px;">
+                                Pomofocus<span style="font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-weight: normal; color: #3157f6; margin-left: 2px;">Pro</span>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+
+                      <!-- Email Body -->
+                      <tr>
+                        <td style="padding: 8px 36px 32px 36px;">
+                          <h1 style="font-size: 22px; font-weight: 700; color: #111318; margin: 0 0 12px 0; letter-spacing: -0.3px;">Verify your email address</h1>
+                          <p style="font-size: 14px; line-height: 22px; color: #62666f; margin: 0 0 24px 0;">
+                            Hi <strong style="color: #111318;">%s</strong>, thanks for getting started with Pomofocus Pro! Enter this 6-digit passcode in your browser to activate your account and start your focus sessions:
+                          </p>
+
+                          <!-- Verification Code Card -->
+                          <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #fcfbf8; border: 1.5px solid #3157f6; border-radius: 16px; margin: 0 0 24px 0;">
+                            <tr>
+                              <td align="center" style="padding: 24px 16px;">
+                                <div style="font-family: 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 38px; font-weight: 800; letter-spacing: 10px; color: #3157f6; padding-left: 10px;">
+                                  %s
+                                </div>
+                                <div style="margin-top: 10px;">
+                                  <span style="display: inline-block; background-color: #e8edff; color: #3157f6; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; border-radius: 20px; padding: 4px 12px; text-transform: uppercase;">
+                                    Valid for 15 minutes
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          </table>
+
+                          <p style="font-size: 13px; line-height: 20px; color: #8f94a0; margin: 0;">
+                            If you did not request this verification code, you can safely ignore this email. No account will be activated without this passcode.
+                          </p>
+                        </td>
+                      </tr>
+
+                      <!-- Footer -->
+                      <tr>
+                        <td style="background-color: #fcfbf8; border-top: 1px solid #e5e3dc; padding: 20px 36px; text-align: center;">
+                          <p style="font-size: 12px; color: #8f94a0; margin: 0; line-height: 18px;">
+                            <strong>Pomofocus Pro</strong> — Dual-budget focus, tracked with precision.
+                          </p>
+                          <p style="font-size: 11px; color: #a1a6b2; margin: 6px 0 0 0;">
+                            <a href="https://pomofocus.shreyashkakde.in" style="color: #3157f6; text-decoration: none; font-weight: 600;">pomofocus.shreyashkakde.in</a>
+                          </p>
+                        </td>
+                      </tr>
+
+                    </table>
+                  </td>
+                </tr>
+              </table>
             </body>
             </html>
             """.formatted(username, otpCode);
