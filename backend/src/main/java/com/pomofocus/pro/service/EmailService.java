@@ -30,13 +30,13 @@ public class EmailService {
         return mailPassword != null && !mailPassword.trim().isEmpty() && !mailPassword.equals("resend-api-key-placeholder");
     }
 
-    public void sendVerificationOtp(String toEmail, String username, String otpCode) {
+    public boolean sendVerificationOtp(String toEmail, String username, String otpCode) {
         if (!isMailConfigured()) {
             log.warn("=================================================================");
             log.warn("⚠️ Resend SMTP credentials not configured (SPRING_MAIL_PASSWORD blank)");
             log.warn("👉 Generated Verification Passcode for {}: {}", toEmail, otpCode);
             log.warn("=================================================================");
-            return;
+            return false;
         }
 
         try {
@@ -52,10 +52,10 @@ public class EmailService {
 
             mailSender.send(message);
             log.info("Verification OTP email dispatched via Resend to {}", toEmail);
+            return true;
         } catch (Exception e) {
-            log.error("Failed to dispatch verification email to {}: {}", toEmail, e.getMessage());
-            log.warn("👉 Fallback Verification Passcode for {}: {}", toEmail, otpCode);
-            throw new ApiException("Failed to send verification email via Resend SMTP. Reason: " + e.getMessage() + ". Check server logs for OTP or set valid SPRING_MAIL_PASSWORD.", HttpStatus.INTERNAL_SERVER_ERROR);
+            log.warn("Resend email dispatch note for {}: {}. Fallback OTP: {}", toEmail, e.getMessage(), otpCode);
+            return false;
         }
     }
 

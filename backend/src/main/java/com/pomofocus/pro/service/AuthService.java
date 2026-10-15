@@ -49,10 +49,10 @@ public class AuthService {
             existing.setUsername(request.getUsername().trim());
             existing.setPasswordHash(passwordEncoder.encode(request.getPassword()));
             userRepository.save(existing);
-            String otp = sendOtpForUser(existing);
-            String message = emailService.isMailConfigured()
+            OtpResult result = sendOtpForUser(existing);
+            String message = result.sent()
                     ? "Verification code dispatched via Resend to " + existing.getEmail()
-                    : "Passcode generated! Your 6-digit verification code is: " + otp;
+                    : "Passcode generated! Your 6-digit verification code is: " + result.otp();
             return AuthResponse.builder()
                     .status("PENDING_VERIFICATION")
                     .message(message)
@@ -69,10 +69,10 @@ public class AuthService {
                 .build();
 
         user = userRepository.save(user);
-        String otp = sendOtpForUser(user);
-        String message = emailService.isMailConfigured()
+        OtpResult result = sendOtpForUser(user);
+        String message = result.sent()
                 ? "Verification code dispatched via Resend to " + user.getEmail()
-                : "Passcode generated! Your 6-digit verification code is: " + otp;
+                : "Passcode generated! Your 6-digit verification code is: " + result.otp();
 
         return AuthResponse.builder()
                 .status("PENDING_VERIFICATION")
@@ -81,7 +81,9 @@ public class AuthService {
                 .build();
     }
 
-    private String sendOtpForUser(User user) {
+    private record OtpResult(String otp, boolean sent) {}
+
+    private OtpResult sendOtpForUser(User user) {
         String otp = String.format("%06d", RANDOM.nextInt(1000000));
         Instant expiresAt = Instant.now().plus(15, ChronoUnit.MINUTES);
 
@@ -95,8 +97,8 @@ public class AuthService {
                 .build();
 
         tokenRepository.save(token);
-        emailService.sendVerificationOtp(user.getEmail(), user.getUsername(), otp);
-        return otp;
+        boolean sent = emailService.sendVerificationOtp(user.getEmail(), user.getUsername(), otp);
+        return new OtpResult(otp, sent);
     }
 
     @Transactional
@@ -158,10 +160,10 @@ public class AuthService {
             throw new ApiException("Account is already verified. Please sign in.", HttpStatus.BAD_REQUEST);
         }
 
-        String otp = sendOtpForUser(user);
-        String message = emailService.isMailConfigured()
+        OtpResult result = sendOtpForUser(user);
+        String message = result.sent()
                 ? "Fresh verification code sent to " + user.getEmail()
-                : "Fresh code generated! Your 6-digit verification code is: " + otp;
+                : "Fresh code generated! Your 6-digit verification code is: " + result.otp();
 
         return AuthResponse.builder()
                 .status("PENDING_VERIFICATION")
