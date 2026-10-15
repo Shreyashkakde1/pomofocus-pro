@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ==============================================================================
 # Pomofocus Pro - Production Docker Compose (VPS Deployment)
 # Isolated services bound strictly to 127.0.0.1 for zero public port exposure
@@ -63,3 +61,4 @@ networks:
 volumes:
   pomofocus_pgdata:
     name: pomofocus_pgdata
+
