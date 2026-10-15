@@ -17,13 +17,28 @@ public class EmailService {
 
     private final JavaMailSender mailSender;
 
+    @Value("${spring.mail.password:}")
+    private String mailPassword;
+
     @Value("${app.mail.from-address:onboarding@resend.dev}")
     private String fromAddress;
 
     @Value("${app.mail.from-name:Pomofocus Pro}")
     private String fromName;
 
+    public boolean isMailConfigured() {
+        return mailPassword != null && !mailPassword.trim().isEmpty() && !mailPassword.equals("resend-api-key-placeholder");
+    }
+
     public void sendVerificationOtp(String toEmail, String username, String otpCode) {
+        if (!isMailConfigured()) {
+            log.warn("=================================================================");
+            log.warn("⚠️ Resend SMTP credentials not configured (SPRING_MAIL_PASSWORD blank)");
+            log.warn("👉 Generated Verification Passcode for {}: {}", toEmail, otpCode);
+            log.warn("=================================================================");
+            return;
+        }
+
         try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
@@ -39,7 +54,8 @@ public class EmailService {
             log.info("Verification OTP email dispatched via Resend to {}", toEmail);
         } catch (Exception e) {
             log.error("Failed to dispatch verification email to {}: {}", toEmail, e.getMessage());
-            throw new ApiException("Failed to send verification email via Resend SMTP. Please verify your Resend credentials. Reason: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+            log.warn("👉 Fallback Verification Passcode for {}: {}", toEmail, otpCode);
+            throw new ApiException("Failed to send verification email via Resend SMTP. Reason: " + e.getMessage() + ". Check server logs for OTP or set valid SPRING_MAIL_PASSWORD.", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
