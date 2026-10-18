@@ -106,18 +106,18 @@ jobs:
           scp -P $VPS_PORT -r dist/* $VPS_USER@$VPS_HOST:/var/www/pomofocus/dist/
 
           # 2. Pull latest git changes and restart Docker containers
-          ssh -p $VPS_PORT $VPS_USER@$VPS_HOST "
+          ssh -p $VPS_PORT $VPS_USER@$VPS_HOST 'bash -s' << 'EOF'
             set -e
             cd /var/www/pomofocus-pro || cd ~/projects/pomofocus-pro || exit 1
             git pull origin main
             if [ -f .env.production ] && [ ! -f .env ]; then
               cp .env.production .env
             fi
-            COMPOSE_CMD="docker compose"
             if command -v docker-compose >/dev/null 2>&1; then
-              COMPOSE_CMD="docker-compose"
+              docker-compose -f docker-compose.prod.yml up -d --build --remove-orphans pomofocus-backend
+            else
+              docker compose -f docker-compose.prod.yml up -d --build --remove-orphans pomofocus-backend
             fi
-            $COMPOSE_CMD -f docker-compose.prod.yml up -d --build --remove-orphans pomofocus-backend
             echo "Waiting for Spring Boot backend to become ready..."
             for i in $(seq 1 30); do
               if curl -s http://127.0.0.1:8085/api/v1/auth/demo >/dev/null 2>&1; then
@@ -126,6 +126,6 @@ jobs:
               fi
               sleep 1
             done
-            echo '✅ Pomofocus Pro deployment completed successfully!'
-          "
+            echo "✅ Pomofocus Pro deployment completed successfully!"
+EOF
 
