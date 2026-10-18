@@ -23,6 +23,8 @@ public class DailyTaskResponse {
     private String title;
     private PriorityTier priorityTier;
     private LocalDate plannedDate;
+    @com.fasterxml.jackson.annotation.JsonProperty("isCompleted")
+    @com.fasterxml.jackson.annotation.JsonAlias("completed")
     private boolean isCompleted;
     private Instant completedAt;
     private int estimatedMinutes;

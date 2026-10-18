@@ -18,6 +18,8 @@ public class TaskResponse {
     private String category;
     private String colorHex;
     private int dailyTargetMinutes;
+    @com.fasterxml.jackson.annotation.JsonProperty("isArchived")
+    @com.fasterxml.jackson.annotation.JsonAlias("archived")
     private boolean isArchived;
     private int sortOrder;
     private Instant createdAt;

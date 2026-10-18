@@ -18,6 +18,8 @@ public class UserDto {
     private String username;
     private String authProvider;
     private String avatarUrl;
+    @com.fasterxml.jackson.annotation.JsonProperty("isVerified")
+    @com.fasterxml.jackson.annotation.JsonAlias("verified")
     private boolean isVerified;
     private Instant createdAt;
 }

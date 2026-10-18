@@ -21,6 +21,8 @@ public class SessionResponse {
     private Instant startTime;
     private Instant endTime;
     private int durationSeconds;
+    @com.fasterxml.jackson.annotation.JsonProperty("isCompleted")
+    @com.fasterxml.jackson.annotation.JsonAlias("completed")
     private boolean isCompleted;
     private Instant createdAt;
 }

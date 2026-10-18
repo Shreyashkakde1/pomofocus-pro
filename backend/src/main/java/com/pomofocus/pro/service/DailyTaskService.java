@@ -107,6 +107,11 @@ public class DailyTaskService {
             task.setSortOrder(request.getSortOrder());
         }
 
+        if (request.getIsCompleted() != null) {
+            task.setCompleted(request.getIsCompleted());
+            task.setCompletedAt(request.getIsCompleted() ? Instant.now() : null);
+        }
+
         task = dailyTaskRepository.save(task);
         return toResponse(task);
     }

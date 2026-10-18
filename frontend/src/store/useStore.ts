@@ -188,6 +188,11 @@ export const persistTimerState = (state: {
   } catch (e) {}
 };
 
+const normalizeDailyTask = (task: any): DailyTaskDto => ({
+  ...task,
+  isCompleted: Boolean(task?.isCompleted ?? task?.completed ?? false),
+});
+
 export const useStore = create<StoreState>((set, get) => ({
   // Auth Initial State
   user: null,
@@ -484,7 +489,7 @@ export const useStore = create<StoreState>((set, get) => ({
     set({ isLoadingDailyTasks: true });
     try {
       const dailyTasks = await api.dailyTasks.list(targetDate);
-      set({ dailyTasks });
+      set({ dailyTasks: Array.isArray(dailyTasks) ? dailyTasks.map(normalizeDailyTask) : [] });
     } catch (err) {
       console.error('Failed to fetch daily tasks:', err);
     } finally {
@@ -502,7 +507,7 @@ export const useStore = create<StoreState>((set, get) => ({
         estimatedMinutes,
         targetId,
       });
-      set({ dailyTasks: [...get().dailyTasks, newTask] });
+      set({ dailyTasks: [...get().dailyTasks, normalizeDailyTask(newTask)] });
     } catch (err) {
       console.error('Failed to create daily task:', err);
       throw err;
@@ -517,7 +522,7 @@ export const useStore = create<StoreState>((set, get) => ({
       });
       const updated = await api.dailyTasks.update(id, updates);
       set({
-        dailyTasks: get().dailyTasks.map((t) => (t.id === id ? updated : t)),
+        dailyTasks: get().dailyTasks.map((t) => (t.id === id ? normalizeDailyTask(updated) : t)),
       });
     } catch (err) {
       console.error('Failed to update daily task:', err);
@@ -527,13 +532,29 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   toggleDailyTask: async (id) => {
+    const previousTasks = get().dailyTasks;
+    const task = previousTasks.find((t) => t.id === id);
+    if (!task) return;
+
+    const nextCompleted = !(task.isCompleted ?? (task as any).completed);
+    soundEffects.playCompletionChime();
+
+    // Optimistic UI update: instant checkmark flip without network lag
+    set({
+      dailyTasks: previousTasks.map((t) =>
+        t.id === id ? { ...t, isCompleted: nextCompleted } : t
+      ),
+    });
+
     try {
-      soundEffects.playCompletionChime();
       const updated = await api.dailyTasks.toggle(id);
+      const normalized = normalizeDailyTask(updated);
       set({
-        dailyTasks: get().dailyTasks.map((t) => (t.id === id ? updated : t)),
+        dailyTasks: get().dailyTasks.map((t) => (t.id === id ? normalized : t)),
       });
     } catch (err) {
+      // Rollback on network failure
+      set({ dailyTasks: previousTasks });
       console.error('Failed to toggle daily task:', err);
       throw err;
     }

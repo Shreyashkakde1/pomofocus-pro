@@ -27,5 +27,9 @@ public class DailyTaskRequest {
     private Integer estimatedMinutes;
 
     private Integer sortOrder;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("isCompleted")
+    @com.fasterxml.jackson.annotation.JsonAlias("completed")
+    private Boolean isCompleted;
 }
 

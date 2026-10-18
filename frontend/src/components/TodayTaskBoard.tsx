@@ -492,8 +492,13 @@ export const TodayTaskBoard: React.FC = () => {
 
                               <button
                                 type="button"
-                                onClick={() => toggleDailyTask(task.id)}
-                                className="shrink-0 text-slate-400 hover:text-emerald-600 transition-colors"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleDailyTask(task.id);
+                                }}
+                                className="shrink-0 text-slate-400 hover:text-emerald-600 transition-colors cursor-pointer p-0.5 rounded hover:bg-emerald-50/50"
+                                title={task.isCompleted ? 'Mark incomplete' : 'Mark completed'}
                               >
                                 {task.isCompleted ? (
                                   <CheckCircle2 className="h-4 w-4 text-emerald-600 fill-emerald-50" />
@@ -582,8 +587,12 @@ export const TodayTaskBoard: React.FC = () => {
                               {/* Delete Button */}
                               <button
                                 type="button"
-                                onClick={() => deleteDailyTask(task.id)}
-                                className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-red-600 transition-all rounded"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteDailyTask(task.id);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 p-0.5 text-slate-400 hover:text-red-600 transition-all rounded cursor-pointer"
                                 title="Delete Task"
                               >
                                 <Trash2 className="h-3 w-3" />
