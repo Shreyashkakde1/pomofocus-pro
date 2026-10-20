@@ -8,15 +8,21 @@ class SoundSynthesizer {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = false;
   private volume: number = 0.5;
+  private alarmInterval: any = null;
+  private alarmTimeout: any = null;
+  private isAlarmPlaying: boolean = false;
+  private activeAlarmOscillators: OscillatorNode[] = [];
 
   constructor() {
-    const savedMuted = localStorage.getItem('pomopro_sfx_muted');
-    if (savedMuted !== null) {
-      this.isMuted = savedMuted === 'true';
-    }
-    const savedVol = localStorage.getItem('pomopro_sfx_volume');
-    if (savedVol !== null) {
-      this.volume = parseFloat(savedVol);
+    if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+      const savedMuted = localStorage.getItem('pomopro_sfx_muted');
+      if (savedMuted !== null) {
+        this.isMuted = savedMuted === 'true';
+      }
+      const savedVol = localStorage.getItem('pomopro_sfx_volume');
+      if (savedVol !== null) {
+        this.volume = parseFloat(savedVol);
+      }
     }
   }
 
@@ -34,7 +40,9 @@ class SoundSynthesizer {
 
   public setMuted(muted: boolean) {
     this.isMuted = muted;
-    localStorage.setItem('pomopro_sfx_muted', String(muted));
+    if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+      localStorage.setItem('pomopro_sfx_muted', String(muted));
+    }
   }
 
   public getMuted(): boolean {
@@ -43,11 +51,97 @@ class SoundSynthesizer {
 
   public setVolume(vol: number) {
     this.volume = Math.max(0, Math.min(1, vol));
-    localStorage.setItem('pomopro_sfx_volume', String(this.volume));
+    if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+      localStorage.setItem('pomopro_sfx_volume', String(this.volume));
+    }
   }
 
   public getVolume(): number {
     return this.volume;
+  }
+
+  public isAlarmActive(): boolean {
+    return this.isAlarmPlaying;
+  }
+
+  /**
+   * Warm Acoustic Chime Alarm (Triggered when focus/break block hits 00:00)
+   * Loops a warm acoustic chord cadence for up to 10 seconds.
+   */
+  public startTimerAlarm() {
+    if (this.isMuted) return;
+    this.stopTimerAlarm();
+    this.isAlarmPlaying = true;
+
+    const playChimeChord = () => {
+      const ctx = this.initCtx();
+      if (!ctx) return;
+
+      const now = ctx.currentTime;
+      // Warm marimba/acoustic chord: E4 (329.63), G#4 (415.30), B4 (493.88), E5 (659.25)
+      const notes = [329.63, 415.30, 493.88, 659.25];
+
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        // Warm harmonic mix: sine with triangle warmth
+        osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.12);
+
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.setValueAtTime(this.volume * 0.35, now + idx * 0.12);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.12 + 1.2);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(now + idx * 0.12);
+        osc.stop(now + idx * 0.12 + 1.2);
+
+        this.activeAlarmOscillators.push(osc);
+      });
+    };
+
+    // Play initial cycle immediately
+    playChimeChord();
+
+    // Repeat cadence every 2.4s
+    this.alarmInterval = setInterval(() => {
+      if (!this.isAlarmPlaying || this.isMuted) {
+        this.stopTimerAlarm();
+        return;
+      }
+      playChimeChord();
+    }, 2400);
+
+    // Auto-stop after 10 seconds max
+    this.alarmTimeout = setTimeout(() => {
+      this.stopTimerAlarm();
+    }, 10000);
+  }
+
+  /**
+   * Immediately halts active alarm, silences oscillators, and clears intervals
+   */
+  public stopTimerAlarm() {
+    this.isAlarmPlaying = false;
+    if (this.alarmInterval) {
+      clearInterval(this.alarmInterval);
+      this.alarmInterval = null;
+    }
+    if (this.alarmTimeout) {
+      clearTimeout(this.alarmTimeout);
+      this.alarmTimeout = null;
+    }
+    this.activeAlarmOscillators.forEach((osc) => {
+      try {
+        osc.stop();
+      } catch (e) {
+        // Already stopped or not started
+      }
+    });
+    this.activeAlarmOscillators = [];
   }
 
   /**
