@@ -33,4 +33,23 @@ describe('SoundSynthesizer Timer Alarm', () => {
     vi.advanceTimersByTime(10000);
     expect(soundEffects.isAlarmActive()).toBe(false);
   });
+
+  it('silences alarm immediately when pointerdown event occurs', () => {
+    const listeners: Record<string, Function> = {};
+    const originalWindow = globalThis.window;
+    globalThis.window = {
+      addEventListener: (type: string, fn: any) => { listeners[type] = fn; },
+      removeEventListener: (type: string, _fn: any) => { delete listeners[type]; },
+    } as any;
+
+    soundEffects.startTimerAlarm();
+    expect(soundEffects.isAlarmActive()).toBe(true);
+
+    if (listeners['pointerdown']) {
+      listeners['pointerdown']();
+    }
+    expect(soundEffects.isAlarmActive()).toBe(false);
+
+    globalThis.window = originalWindow;
+  });
 });

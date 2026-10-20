@@ -713,6 +713,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   setTimerMode: (newMode) => {
+    soundEffects.stopTimerAlarm();
     const prevMode = get().mode;
     const activeTaskId = get().activeTaskId;
 
@@ -796,6 +797,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   startTimer: () => {
+    soundEffects.stopTimerAlarm();
     soundEffects.playInterfaceBlip();
     set({
       isRunning: true,
@@ -805,6 +807,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   pauseTimer: async () => {
+    soundEffects.stopTimerAlarm();
     soundEffects.playInterfaceBlip();
     const { isRunning, focusSliceStart, sessionRemainingAtStart, remainingSeconds, durationSeconds, activeTaskId, mode, tasks, focusRemainingByTask } = get();
 
@@ -895,6 +898,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   resetTimer: () => {
+    soundEffects.stopTimerAlarm();
     soundEffects.playInterfaceBlip();
     const mode = get().mode;
     const activeTaskId = get().activeTaskId;
@@ -1072,6 +1076,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   skipTimer: async () => {
+    soundEffects.stopTimerAlarm();
     soundEffects.playCompletionChime();
     const { isRunning, focusSliceStart, sessionRemainingAtStart, remainingSeconds, durationSeconds, activeTaskId, mode, tasks } = get();
 
@@ -1172,7 +1177,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   onTimerComplete: async () => {
-    soundEffects.playCompletionChime();
+    soundEffects.startTimerAlarm();
 
     const { activeTaskId, mode, focusSliceStart, sessionRemainingAtStart, durationSeconds, tasks } = get();
     const startRem = sessionRemainingAtStart ?? durationSeconds;

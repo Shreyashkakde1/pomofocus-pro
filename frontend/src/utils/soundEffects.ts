@@ -12,6 +12,7 @@ class SoundSynthesizer {
   private alarmTimeout: any = null;
   private isAlarmPlaying: boolean = false;
   private activeAlarmOscillators: OscillatorNode[] = [];
+  private dismissHandler: (() => void) | null = null;
 
   constructor() {
     if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
@@ -28,14 +29,20 @@ class SoundSynthesizer {
 
   private initCtx(): AudioContext | null {
     if (typeof window === 'undefined') return null;
-    if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.ctx = new AudioCtx();
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return null;
+
+    try {
+      if (!this.ctx) {
+        this.ctx = new AudioCtx();
+      }
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume();
+      }
+      return this.ctx;
+    } catch (e) {
+      return null;
     }
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
-    }
-    return this.ctx;
   }
 
   public setMuted(muted: boolean) {
@@ -119,6 +126,14 @@ class SoundSynthesizer {
     this.alarmTimeout = setTimeout(() => {
       this.stopTimerAlarm();
     }, 10000);
+
+    // Global click-to-dismiss handler: clicking anywhere instantly stops the alarm
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      this.dismissHandler = () => {
+        this.stopTimerAlarm();
+      };
+      window.addEventListener('pointerdown', this.dismissHandler, { capture: true, once: true });
+    }
   }
 
   /**
@@ -126,6 +141,10 @@ class SoundSynthesizer {
    */
   public stopTimerAlarm() {
     this.isAlarmPlaying = false;
+    if (typeof window !== 'undefined' && window.removeEventListener && this.dismissHandler) {
+      window.removeEventListener('pointerdown', this.dismissHandler, { capture: true });
+      this.dismissHandler = null;
+    }
     if (this.alarmInterval) {
       clearInterval(this.alarmInterval);
       this.alarmInterval = null;
