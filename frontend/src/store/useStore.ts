@@ -974,6 +974,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   hotSwitchTask: async (newTaskId) => {
+    soundEffects.stopTimerAlarm();
     const { activeTaskId, tasks, isRunning, focusSliceStart, sessionRemainingAtStart, remainingSeconds, mode } = get();
     if (activeTaskId === newTaskId) return;
 

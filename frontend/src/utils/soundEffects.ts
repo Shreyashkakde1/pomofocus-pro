@@ -47,6 +47,9 @@ class SoundSynthesizer {
 
   public setMuted(muted: boolean) {
     this.isMuted = muted;
+    if (muted) {
+      this.stopTimerAlarm();
+    }
     if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
       localStorage.setItem('pomopro_sfx_muted', String(muted));
     }
@@ -76,7 +79,7 @@ class SoundSynthesizer {
    * Loops a warm acoustic chord cadence for up to 10 seconds.
    */
   public startTimerAlarm() {
-    if (this.isMuted) return;
+    if (this.isMuted || this.volume <= 0) return;
     this.stopTimerAlarm();
     this.isAlarmPlaying = true;
 
@@ -87,6 +90,7 @@ class SoundSynthesizer {
       const now = ctx.currentTime;
       // Warm marimba/acoustic chord: E4 (329.63), G#4 (415.30), B4 (493.88), E5 (659.25)
       const notes = [329.63, 415.30, 493.88, 659.25];
+      const peakVolume = Math.max(0.0001, this.volume * 0.35);
 
       notes.forEach((freq, idx) => {
         const osc = ctx.createOscillator();
@@ -96,8 +100,7 @@ class SoundSynthesizer {
         osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
         osc.frequency.setValueAtTime(freq, now + idx * 0.12);
 
-        gain.gain.setValueAtTime(0, now);
-        gain.gain.setValueAtTime(this.volume * 0.35, now + idx * 0.12);
+        gain.gain.setValueAtTime(peakVolume, now + idx * 0.12);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.12 + 1.2);
 
         osc.connect(gain);
@@ -110,19 +113,22 @@ class SoundSynthesizer {
       });
     };
 
+    let cyclesPlayed = 0;
     // Play initial cycle immediately
     playChimeChord();
+    cyclesPlayed++;
 
-    // Repeat cadence every 2.4s
+    // Repeat cadence every 2.4s (cap at 4 cycles ~7.2s start, naturally decays by 9.5s)
     this.alarmInterval = setInterval(() => {
-      if (!this.isAlarmPlaying || this.isMuted) {
+      if (!this.isAlarmPlaying || this.isMuted || cyclesPlayed >= 4) {
         this.stopTimerAlarm();
         return;
       }
       playChimeChord();
+      cyclesPlayed++;
     }, 2400);
 
-    // Auto-stop after 10 seconds max
+    // Auto-stop after 10 seconds max safety cleanup
     this.alarmTimeout = setTimeout(() => {
       this.stopTimerAlarm();
     }, 10000);
