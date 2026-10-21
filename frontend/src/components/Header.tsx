@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
-import { Volume2, VolumeX, BarChart2, LogOut, Sparkles } from 'lucide-react';
+import { Volume2, VolumeX, BarChart2, LogOut, Sparkles, Bell, BellOff } from 'lucide-react';
+import { notifications } from '../utils/notifications';
 
 export const Header: React.FC = () => {
   const user = useStore((s) => s.user);
@@ -17,6 +18,27 @@ export const Header: React.FC = () => {
   const closeDailyReview = useStore((s) => s.closeDailyReview);
   const mode = useStore((s) => s.mode);
   const isRunning = useStore((s) => s.isRunning);
+
+  const [notifEnabled, setNotifEnabled] = useState(() => notifications.isEnabled());
+  const [permission, setPermission] = useState<NotificationPermission>(() => notifications.getPermission());
+
+  const handleToggleNotifications = async () => {
+    if (!notifications.isSupported()) return;
+
+    if (permission === 'default') {
+      const granted = await notifications.requestPermission();
+      setPermission(notifications.getPermission());
+      if (granted) {
+        notifications.setEnabled(true);
+        setNotifEnabled(true);
+      }
+      return;
+    }
+
+    const next = !notifEnabled;
+    notifications.setEnabled(next);
+    setNotifEnabled(next);
+  };
 
   return (
     <header className="sticky top-0 z-50 border-b border-black/[0.08] bg-[#f5f3ee]/90 backdrop-blur-xl">
@@ -65,6 +87,33 @@ export const Header: React.FC = () => {
             {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
             <span className="hidden md:inline font-mono text-[11px]">[M]</span>
           </button>
+
+          {/* Desktop Notifications Toggle */}
+          {notifications.isSupported() && (
+            <button
+              onClick={handleToggleNotifications}
+              className={`h-9 px-2.5 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                notifEnabled && permission === 'granted'
+                  ? 'border-tercelet-brand/30 bg-tercelet-brandSoft text-tercelet-brand'
+                  : 'border-black/10 text-tercelet-faint bg-white hover:text-[#111318]'
+              }`}
+              title={
+                permission === 'denied'
+                  ? 'Notifications blocked in browser settings'
+                  : permission === 'default'
+                  ? 'Click to enable desktop notifications'
+                  : notifEnabled
+                  ? 'Desktop notifications enabled'
+                  : 'Desktop notifications paused'
+              }
+            >
+              {notifEnabled && permission === 'granted' ? (
+                <Bell className="h-4 w-4" />
+              ) : (
+                <BellOff className="h-4 w-4" />
+              )}
+            </button>
+          )}
 
           {/* Statistics Button with Proof Badge */}
           <button
