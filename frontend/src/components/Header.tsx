@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { Volume2, VolumeX, BarChart2, LogOut, Sparkles, Bell, BellOff } from 'lucide-react';
 import { notifications } from '../utils/notifications';
@@ -22,8 +22,26 @@ export const Header: React.FC = () => {
   const [notifEnabled, setNotifEnabled] = useState(() => notifications.isEnabled());
   const [permission, setPermission] = useState<NotificationPermission>(() => notifications.getPermission());
 
+  useEffect(() => {
+    const syncState = () => {
+      setNotifEnabled(notifications.isEnabled());
+      setPermission(notifications.getPermission());
+    };
+    syncState();
+    const unsubscribe = notifications.subscribe(syncState);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', syncState);
+    }
+    return () => {
+      unsubscribe();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', syncState);
+      }
+    };
+  }, []);
+
   const handleToggleNotifications = async () => {
-    if (!notifications.isSupported()) return;
+    if (!notifications.isSupported() || permission === 'denied') return;
 
     if (permission === 'default') {
       const granted = await notifications.requestPermission();
@@ -92,8 +110,20 @@ export const Header: React.FC = () => {
           {notifications.isSupported() && (
             <button
               onClick={handleToggleNotifications}
+              disabled={permission === 'denied'}
+              aria-label={
+                permission === 'denied'
+                  ? 'Notifications blocked in browser settings'
+                  : permission === 'default'
+                  ? 'Enable desktop notifications'
+                  : notifEnabled
+                  ? 'Pause desktop notifications'
+                  : 'Resume desktop notifications'
+              }
               className={`h-9 px-2.5 rounded-xl border text-xs font-medium flex items-center gap-1.5 transition-colors ${
-                notifEnabled && permission === 'granted'
+                permission === 'denied'
+                  ? 'border-black/10 text-tercelet-faint bg-black/[0.03] opacity-60 cursor-not-allowed'
+                  : notifEnabled && permission === 'granted'
                   ? 'border-tercelet-brand/30 bg-tercelet-brandSoft text-tercelet-brand'
                   : 'border-black/10 text-tercelet-faint bg-white hover:text-[#111318]'
               }`}

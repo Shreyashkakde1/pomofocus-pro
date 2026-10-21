@@ -58,11 +58,13 @@ describe('Desktop Notification Engine', () => {
     expect(result).toBe(true);
   });
 
-  it('sends focus completion notification with task title', () => {
+  it('sends focus completion notification with task title, renotify and svg icon', () => {
     const notif = notifications.sendCompletionNotification('FOCUS', 'Deep Work DSA');
     expect(notif).not.toBeNull();
     expect(notif?.title).toBe('Time\'s up! Focus session complete');
     expect((notif as any)?.options?.body).toContain('Deep Work DSA');
+    expect((notif as any)?.options?.icon).toBe('/favicon.svg');
+    expect((notif as any)?.options?.renotify).toBe(true);
   });
 
   it('sends break completion notification', () => {
@@ -83,6 +85,24 @@ describe('Desktop Notification Engine', () => {
     expect(globalThis.window.focus).toHaveBeenCalled();
     expect(stopAlarmSpy).toHaveBeenCalled();
     expect(notif!.close).toHaveBeenCalled();
+  });
+
+  it('persists enabled preference to localStorage and alerts subscribers', () => {
+    const listener = vi.fn();
+    const unsub = notifications.subscribe(listener);
+
+    notifications.setEnabled(false);
+    expect(globalThis.window.localStorage.setItem).toHaveBeenCalledWith('pomopro_notifications_enabled', 'false');
+    expect(listener).toHaveBeenCalled();
+
+    unsub();
+  });
+
+  it('handles unsupported environment gracefully', () => {
+    delete (globalThis.window as any).Notification;
+    expect(notifications.isSupported()).toBe(false);
+    expect(notifications.getPermission()).toBe('denied');
+    expect(notifications.sendCompletionNotification('FOCUS')).toBeNull();
   });
 
   it('does not send notification when disabled or permission is denied', () => {

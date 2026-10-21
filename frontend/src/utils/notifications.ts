@@ -7,14 +7,36 @@ import { soundEffects } from './soundEffects';
 
 class NotificationEngine {
   private enabled: boolean = true;
+  private listeners: Set<() => void> = new Set();
 
   constructor() {
-    if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
-      const saved = window.localStorage.getItem('pomopro_notifications_enabled');
-      if (saved !== null) {
-        this.enabled = saved === 'true';
+    try {
+      if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+        const saved = window.localStorage.getItem('pomopro_notifications_enabled');
+        if (saved !== null) {
+          this.enabled = saved === 'true';
+        }
       }
+    } catch {
+      // Graceful fallback for restricted storage environments
     }
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notify() {
+    this.listeners.forEach((fn) => {
+      try {
+        fn();
+      } catch {
+        // Safe dispatch
+      }
+    });
   }
 
   public isSupported(): boolean {
@@ -30,8 +52,9 @@ class NotificationEngine {
     if (!this.isSupported()) return false;
     try {
       const permission = await window.Notification.requestPermission();
+      this.notify();
       return permission === 'granted';
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -42,9 +65,14 @@ class NotificationEngine {
 
   public setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-    if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
-      window.localStorage.setItem('pomopro_notifications_enabled', String(enabled));
+    try {
+      if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+        window.localStorage.setItem('pomopro_notifications_enabled', String(enabled));
+      }
+    } catch {
+      // Graceful fallback for restricted storage environments
     }
+    this.notify();
   }
 
   public sendCompletionNotification(
@@ -70,9 +98,10 @@ class NotificationEngine {
 
       const notif = new window.Notification(title, {
         body,
-        icon: '/favicon.ico',
+        icon: '/favicon.svg',
         tag: 'pomopro-timer-completion',
-      });
+        renotify: true,
+      } as NotificationOptions);
 
       notif.onclick = () => {
         if (typeof window !== 'undefined' && window.focus) {
@@ -83,7 +112,7 @@ class NotificationEngine {
       };
 
       return notif;
-    } catch (e) {
+    } catch {
       return null;
     }
   }

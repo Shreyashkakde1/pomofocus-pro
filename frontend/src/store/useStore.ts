@@ -800,7 +800,7 @@ export const useStore = create<StoreState>((set, get) => ({
   startTimer: () => {
     soundEffects.stopTimerAlarm();
     soundEffects.playInterfaceBlip();
-    if (notifications.isSupported() && notifications.getPermission() === 'default') {
+    if (notifications.isSupported() && notifications.isEnabled() && notifications.getPermission() === 'default') {
       notifications.requestPermission();
     }
     set({
