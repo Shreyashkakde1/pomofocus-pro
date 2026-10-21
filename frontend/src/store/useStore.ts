@@ -12,6 +12,7 @@ import type {
   SaveDailyDebriefRequest,
 } from '../api/client';
 import { soundEffects } from '../utils/soundEffects';
+import { notifications } from '../utils/notifications';
 
 export type TimerMode = 'FOCUS' | 'SHORT_BREAK' | 'LONG_BREAK';
 
@@ -799,6 +800,9 @@ export const useStore = create<StoreState>((set, get) => ({
   startTimer: () => {
     soundEffects.stopTimerAlarm();
     soundEffects.playInterfaceBlip();
+    if (notifications.isSupported() && notifications.getPermission() === 'default') {
+      notifications.requestPermission();
+    }
     set({
       isRunning: true,
       focusSliceStart: new Date().toISOString(),
@@ -1181,6 +1185,8 @@ export const useStore = create<StoreState>((set, get) => ({
     soundEffects.startTimerAlarm();
 
     const { activeTaskId, mode, focusSliceStart, sessionRemainingAtStart, durationSeconds, tasks } = get();
+    const activeTask = tasks.find((t) => t.id === activeTaskId);
+    notifications.sendCompletionNotification(mode, activeTask?.title);
     const startRem = sessionRemainingAtStart ?? durationSeconds;
     const sliceDuration = Math.max(1, startRem);
     const endTime = new Date().toISOString();

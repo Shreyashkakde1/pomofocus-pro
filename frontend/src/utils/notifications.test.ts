@@ -62,7 +62,7 @@ describe('Desktop Notification Engine', () => {
     const notif = notifications.sendCompletionNotification('FOCUS', 'Deep Work DSA');
     expect(notif).not.toBeNull();
     expect(notif?.title).toBe('Time\'s up! Focus session complete');
-    expect(notif?.options.body).toContain('Deep Work DSA');
+    expect((notif as any)?.options?.body).toContain('Deep Work DSA');
   });
 
   it('sends break completion notification', () => {
@@ -77,7 +77,9 @@ describe('Desktop Notification Engine', () => {
     expect(notif).not.toBeNull();
 
     // Trigger click handler
-    notif!.onclick();
+    if (notif && notif.onclick) {
+      notif.onclick.call(notif, new Event('click'));
+    }
     expect(globalThis.window.focus).toHaveBeenCalled();
     expect(stopAlarmSpy).toHaveBeenCalled();
     expect(notif!.close).toHaveBeenCalled();
