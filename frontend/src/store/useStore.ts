@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { api } from '../api/client';
+import { api, isAuthRejection, setSessionExpiredHandler } from '../api/client';
 import type {
   TaskDto,
   UserDto,
@@ -24,9 +24,11 @@ interface StoreState {
   isAuthModalOpen: boolean;
   authModalMode: 'LOGIN' | 'SIGNUP' | 'OTP';
   pendingEmail: string;
+  authNotice: string | null;
 
   setAuth: (user: UserDto, token: string) => void;
   logout: () => void;
+  expireSession: () => void;
   openAuthModal: (mode?: 'LOGIN' | 'SIGNUP' | 'OTP', email?: string) => void;
   closeAuthModal: () => void;
   loadCurrentUser: () => Promise<void>;
@@ -194,6 +196,51 @@ const normalizeDailyTask = (task: any): DailyTaskDto => ({
   isCompleted: Boolean(task?.isCompleted ?? task?.completed ?? false),
 });
 
+// State that belongs to the signed-in account. Reset whenever the account changes so
+// targets, plans, timer progress and reports never carry over to another user.
+const clearUserScopedState = (focusSeconds: number) => {
+  try {
+    localStorage.removeItem('pomopro_active_timer');
+  } catch {
+    // Storage can be unavailable (private mode); in-memory state is still cleared.
+  }
+  return {
+    tasks: [] as TaskDto[],
+    activeTaskId: null,
+    dailyTasks: [] as DailyTaskDto[],
+    todayDebrief: null,
+    debriefHistory: [] as DailyDebriefDto[],
+    dailyReport: null,
+    weeklyReport: null,
+    mode: 'FOCUS' as TimerMode,
+    isRunning: false,
+    durationSeconds: focusSeconds,
+    remainingSeconds: focusSeconds,
+    focusSliceStart: null,
+    sessionRemainingAtStart: null,
+    focusRemainingByTask: {},
+    isCheckpointPromptOpen: false,
+    promptPreviousTask: null,
+  };
+};
+
+// Optimistically credit a focus slice to a target. Minutes are floored to match
+// TaskService on the backend, so the value does not change when fetchTasks() returns.
+export const applyFocusSlice = (task: TaskDto, sliceSeconds: number): TaskDto => {
+  const newSecs = task.todayFocusSeconds + sliceSeconds;
+  const newMins = Math.floor(newSecs / 60);
+  const progress = task.dailyTargetMinutes > 0
+    ? Math.min(100, Math.round((newSecs / (task.dailyTargetMinutes * 60)) * 1000) / 10)
+    : 0;
+  return {
+    ...task,
+    todayFocusSeconds: newSecs,
+    todayFocusMinutes: newMins,
+    progressPercentage: progress,
+    deficitOrSurplusMinutes: newMins - task.dailyTargetMinutes,
+  };
+};
+
 export const useStore = create<StoreState>((set, get) => ({
   // Auth Initial State
   user: null,
@@ -202,17 +249,45 @@ export const useStore = create<StoreState>((set, get) => ({
   isAuthModalOpen: false,
   authModalMode: 'LOGIN',
   pendingEmail: '',
+  authNotice: null,
 
   setAuth: (user, token) => {
+    // A different account must never inherit the previous account's targets, plan or timer.
+    const isSameUser = get().user?.id === user.id;
     localStorage.setItem('pomopro_token', token);
-    set({ user, token, isAuthenticated: true, isAuthModalOpen: false });
+    set({
+      ...(isSameUser ? {} : clearUserScopedState(get().timerDurations.FOCUS)),
+      user,
+      token,
+      isAuthenticated: true,
+      isAuthModalOpen: false,
+      authNotice: null,
+    });
     get().fetchTasks();
     get().fetchDailyTasks();
   },
 
   logout: () => {
     localStorage.removeItem('pomopro_token');
-    set({ user: null, token: null, isAuthenticated: false, tasks: [], activeTaskId: null, dailyTasks: [] });
+    set({
+      ...clearUserScopedState(get().timerDurations.FOCUS),
+      user: null,
+      token: null,
+      isAuthenticated: false,
+      authNotice: null,
+    });
+    get().openAuthModal('LOGIN');
+  },
+
+  expireSession: () => {
+    localStorage.removeItem('pomopro_token');
+    set({
+      ...clearUserScopedState(get().timerDurations.FOCUS),
+      user: null,
+      token: null,
+      isAuthenticated: false,
+      authNotice: 'Your session has expired. Please sign in again.',
+    });
     get().openAuthModal('LOGIN');
   },
 
@@ -221,38 +296,32 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   closeAuthModal: () => {
-    set({ isAuthModalOpen: false });
+    set({ isAuthModalOpen: false, authNotice: null });
   },
 
   loadCurrentUser: async () => {
     const token = localStorage.getItem('pomopro_token');
+    // Never sign in automatically (e.g. as the shared demo user): without a stored
+    // session the user chooses how to sign in, and the modal offers the demo explicitly.
     if (!token) {
-      try {
-        const res = await api.auth.demoLogin();
-        if (res.token && res.user) {
-          get().setAuth(res.user, res.token);
-          return;
-        }
-      } catch {
-        set({ isAuthenticated: false, isAuthModalOpen: false });
-        return;
-      }
+      set({ user: null, token: null, isAuthenticated: false });
+      get().openAuthModal('LOGIN');
+      return;
     }
     try {
       const user = await api.auth.me();
-      set({ user, isAuthenticated: true });
+      // A login or logout that happened while /auth/me was in flight wins.
+      if (localStorage.getItem('pomopro_token') !== token) return;
+      set({ user, token, isAuthenticated: true });
       await get().fetchTasks();
       await get().fetchDailyTasks();
-    } catch {
-      localStorage.removeItem('pomopro_token');
-      try {
-        const res = await api.auth.demoLogin();
-        if (res.token && res.user) {
-          get().setAuth(res.user, res.token);
-        }
-      } catch {
-        set({ user: null, token: null, isAuthenticated: false, isAuthModalOpen: false });
+    } catch (err) {
+      if (isAuthRejection(err)) {
+        // Expired or revoked token: end this session instead of switching accounts.
+        get().expireSession();
       }
+      // Any other failure (offline right after waking from sleep, server restart) keeps
+      // the stored session so the next attempt resumes as the same user.
     }
   },
 
@@ -264,8 +333,11 @@ export const useStore = create<StoreState>((set, get) => ({
   fetchTasks: async () => {
     if (!get().isAuthenticated) return;
     set({ isLoadingTasks: true });
+    const requestToken = get().token;
     try {
       const tasks = await api.tasks.list();
+      // Drop a response that belongs to a session which ended while it was in flight.
+      if (get().token !== requestToken) return;
       set({ tasks });
       if (tasks.length > 0) {
         const currentActive = get().activeTaskId ? tasks.find((t) => t.id === get().activeTaskId) : null;
@@ -488,8 +560,10 @@ export const useStore = create<StoreState>((set, get) => ({
     if (!get().isAuthenticated) return;
     const targetDate = date || get().activePlannedDate;
     set({ isLoadingDailyTasks: true });
+    const requestToken = get().token;
     try {
       const dailyTasks = await api.dailyTasks.list(targetDate);
+      if (get().token !== requestToken) return;
       set({ dailyTasks: Array.isArray(dailyTasks) ? dailyTasks.map(normalizeDailyTask) : [] });
     } catch (err) {
       console.error('Failed to fetch daily tasks:', err);
@@ -773,7 +847,10 @@ export const useStore = create<StoreState>((set, get) => ({
   setIsRunning: (running) => set({ isRunning: running }),
 
   setRemainingSeconds: (sec) => {
-    const { mode, activeTaskId, durationSeconds, focusRemainingByTask } = get();
+    const { isRunning, mode, activeTaskId, durationSeconds, focusRemainingByTask } = get();
+    // A TICK posted by the worker before it processed PAUSE can arrive after the store
+    // stopped the timer; applying it would remove a second that no slice credits.
+    if (!isRunning) return;
     let updatedFocusRemaining = focusRemainingByTask;
     if (mode === 'FOCUS' && activeTaskId) {
       updatedFocusRemaining = {
@@ -832,30 +909,33 @@ export const useStore = create<StoreState>((set, get) => ({
       };
     }
 
-    if (isRunning && sliceDuration > 0 && mode === 'FOCUS') {
+    const shouldLog = isRunning && sliceDuration > 0 && mode === 'FOCUS';
+
+    // Stop the clock before any network await: while isRunning stays true the worker
+    // keeps ticking remainingSeconds down, and those seconds would never be logged.
+    set({
+      isRunning: false,
+      focusSliceStart: null,
+      sessionRemainingAtStart: null,
+      focusRemainingByTask: updatedFocusRemaining,
+      ...(shouldLog && activeTaskId
+        ? { tasks: tasks.map((t) => (t.id === activeTaskId ? applyFocusSlice(t, sliceDuration) : t)) }
+        : {}),
+    });
+
+    persistTimerState({
+      mode,
+      durationSeconds,
+      remainingSeconds,
+      activeTaskId,
+      focusRemainingByTask: updatedFocusRemaining,
+    });
+
+    if (shouldLog) {
       const startTime = focusSliceStart || new Date(Date.now() - sliceDuration * 1000).toISOString();
       const endTime = new Date().toISOString();
 
       if (activeTaskId) {
-        const updatedTasks = tasks.map((t) => {
-          if (t.id === activeTaskId) {
-            const newSecs = t.todayFocusSeconds + sliceDuration;
-            const newMins = Math.round(newSecs / 60);
-            const progress = t.dailyTargetMinutes > 0
-              ? Math.min(100, Math.round((newSecs / (t.dailyTargetMinutes * 60)) * 1000) / 10)
-              : 0;
-            return {
-              ...t,
-              todayFocusSeconds: newSecs,
-              todayFocusMinutes: newMins,
-              progressPercentage: progress,
-              deficitOrSurplusMinutes: newMins - t.dailyTargetMinutes,
-            };
-          }
-          return t;
-        });
-        set({ tasks: updatedTasks });
-
         try {
           await api.sessions.log({
             taskId: activeTaskId,
@@ -884,21 +964,6 @@ export const useStore = create<StoreState>((set, get) => ({
         }
       }
     }
-
-    set({
-      isRunning: false,
-      focusSliceStart: null,
-      sessionRemainingAtStart: null,
-      focusRemainingByTask: updatedFocusRemaining,
-    });
-
-    persistTimerState({
-      mode,
-      durationSeconds,
-      remainingSeconds,
-      activeTaskId,
-      focusRemainingByTask: updatedFocusRemaining,
-    });
   },
 
   resetTimer: () => {
@@ -987,54 +1052,19 @@ export const useStore = create<StoreState>((set, get) => ({
     const prevTask = tasks.find((t) => t.id === activeTaskId);
     const nextTask = tasks.find((t) => t.id === newTaskId);
 
-    if (isRunning && mode === 'FOCUS' && activeTaskId) {
-      const startRem = sessionRemainingAtStart ?? get().durationSeconds;
-      const sliceDuration = Math.max(0, startRem - remainingSeconds);
+    const startRem = sessionRemainingAtStart ?? get().durationSeconds;
+    const sliceDuration = isRunning && mode === 'FOCUS' && activeTaskId
+      ? Math.max(0, startRem - remainingSeconds)
+      : 0;
+    const sliceEndTime = new Date().toISOString();
+    const sliceStartTime = focusSliceStart || new Date(Date.now() - sliceDuration * 1000).toISOString();
 
-      if (sliceDuration > 0) {
-        const updatedTasks = tasks.map((t) => {
-          if (t.id === activeTaskId) {
-            const newSecs = t.todayFocusSeconds + sliceDuration;
-            const newMins = Math.round(newSecs / 60);
-            const progress = t.dailyTargetMinutes > 0
-              ? Math.min(100, Math.round((newSecs / (t.dailyTargetMinutes * 60)) * 1000) / 10)
-              : 0;
-            return {
-              ...t,
-              todayFocusSeconds: newSecs,
-              todayFocusMinutes: newMins,
-              progressPercentage: progress,
-              deficitOrSurplusMinutes: newMins - t.dailyTargetMinutes,
-            };
-          }
-          return t;
-        });
-        set({ tasks: updatedTasks });
-
-        const startTime = focusSliceStart || new Date(Date.now() - sliceDuration * 1000).toISOString();
-        const endTime = new Date().toISOString();
-
-        try {
-          await api.sessions.log({
-            taskId: activeTaskId,
-            sessionType: mode,
-            startTime,
-            endTime,
-            durationSeconds: sliceDuration,
-            completed: false,
-          });
-          get().fetchTasks();
-        } catch (err) {
-          console.error('Failed to log hot-switched session slice:', err);
-        }
-      }
-    }
-
-    // Save previous task's focus remaining
+    // Save previous task's focus remaining from the same snapshot the slice was cut from,
+    // before any await, so seconds ticked during the network call are not dropped.
     let updatedFocusRemaining = { ...get().focusRemainingByTask };
     if (activeTaskId && mode === 'FOCUS') {
       updatedFocusRemaining[activeTaskId] = {
-        remainingSeconds: get().remainingSeconds,
+        remainingSeconds,
         durationSeconds: get().durationSeconds,
       };
     }
@@ -1049,6 +1079,9 @@ export const useStore = create<StoreState>((set, get) => ({
     const nextDur = (savedNext && savedNext.durationSeconds > 0) ? savedNext.durationSeconds : nextTargetSecs;
 
     set({
+      ...(sliceDuration > 0
+        ? { tasks: tasks.map((t) => (t.id === activeTaskId ? applyFocusSlice(t, sliceDuration) : t)) }
+        : {}),
       activeTaskId: newTaskId,
       durationSeconds: nextDur,
       remainingSeconds: nextRem,
@@ -1078,6 +1111,22 @@ export const useStore = create<StoreState>((set, get) => ({
         })
       );
     }
+
+    if (sliceDuration > 0 && activeTaskId) {
+      try {
+        await api.sessions.log({
+          taskId: activeTaskId,
+          sessionType: mode,
+          startTime: sliceStartTime,
+          endTime: sliceEndTime,
+          durationSeconds: sliceDuration,
+          completed: false,
+        });
+        get().fetchTasks();
+      } catch (err) {
+        console.error('Failed to log hot-switched session slice:', err);
+      }
+    }
   },
 
   skipTimer: async () => {
@@ -1085,46 +1134,14 @@ export const useStore = create<StoreState>((set, get) => ({
     soundEffects.playCompletionChime();
     const { isRunning, focusSliceStart, sessionRemainingAtStart, remainingSeconds, durationSeconds, activeTaskId, mode, tasks } = get();
 
-    if (isRunning && mode === 'FOCUS' && activeTaskId) {
-      const startRem = sessionRemainingAtStart ?? durationSeconds;
-      const sliceDuration = Math.max(0, startRem - remainingSeconds);
-      if (sliceDuration > 0) {
-        const updatedTasks = tasks.map((t) => {
-          if (t.id === activeTaskId) {
-            const newSecs = t.todayFocusSeconds + sliceDuration;
-            const newMins = Math.round(newSecs / 60);
-            const progress = t.dailyTargetMinutes > 0
-              ? Math.min(100, Math.round((newSecs / (t.dailyTargetMinutes * 60)) * 1000) / 10)
-              : 0;
-            return {
-              ...t,
-              todayFocusSeconds: newSecs,
-              todayFocusMinutes: newMins,
-              progressPercentage: progress,
-              deficitOrSurplusMinutes: newMins - t.dailyTargetMinutes,
-            };
-          }
-          return t;
-        });
-        set({ tasks: updatedTasks });
-
-        const startTime = focusSliceStart || new Date(Date.now() - sliceDuration * 1000).toISOString();
-        const endTime = new Date().toISOString();
-
-        try {
-          await api.sessions.log({
-            taskId: activeTaskId,
-            sessionType: mode,
-            startTime,
-            endTime,
-            durationSeconds: sliceDuration,
-            completed: false,
-          });
-          await get().fetchTasks();
-        } catch (err) {
-          console.error('Failed to log skipped session slice:', err);
-        }
-      }
+    const startRem = sessionRemainingAtStart ?? durationSeconds;
+    const sliceDuration = isRunning && mode === 'FOCUS' && activeTaskId
+      ? Math.max(0, startRem - remainingSeconds)
+      : 0;
+    const sliceEndTime = new Date().toISOString();
+    const sliceStartTime = focusSliceStart || new Date(Date.now() - sliceDuration * 1000).toISOString();
+    if (sliceDuration > 0) {
+      set({ tasks: tasks.map((t) => (t.id === activeTaskId ? applyFocusSlice(t, sliceDuration) : t)) });
     }
 
     // Preserve Focus Timer Progress when transitioning to break
@@ -1179,6 +1196,22 @@ export const useStore = create<StoreState>((set, get) => ({
       activeTaskId: get().activeTaskId,
       focusRemainingByTask: updatedFocusRemaining,
     });
+
+    if (sliceDuration > 0 && activeTaskId) {
+      try {
+        await api.sessions.log({
+          taskId: activeTaskId,
+          sessionType: mode,
+          startTime: sliceStartTime,
+          endTime: sliceEndTime,
+          durationSeconds: sliceDuration,
+          completed: false,
+        });
+        await get().fetchTasks();
+      } catch (err) {
+        console.error('Failed to log skipped session slice:', err);
+      }
+    }
   },
 
   onTimerComplete: async () => {
@@ -1197,39 +1230,7 @@ export const useStore = create<StoreState>((set, get) => ({
     if (mode === 'FOCUS' && activeTaskId) {
       // Completed full focus block! Clear saved focus progress for this task so next block starts full
       delete updatedFocusRemaining[activeTaskId];
-
-      const updatedTasks = tasks.map((t) => {
-        if (t.id === activeTaskId) {
-          const newSecs = t.todayFocusSeconds + sliceDuration;
-          const newMins = Math.round(newSecs / 60);
-          const progress = t.dailyTargetMinutes > 0
-            ? Math.min(100, Math.round((newSecs / (t.dailyTargetMinutes * 60)) * 1000) / 10)
-            : 0;
-          return {
-            ...t,
-            todayFocusSeconds: newSecs,
-            todayFocusMinutes: newMins,
-            progressPercentage: progress,
-            deficitOrSurplusMinutes: newMins - t.dailyTargetMinutes,
-          };
-        }
-        return t;
-      });
-      set({ tasks: updatedTasks });
-
-      try {
-        await api.sessions.log({
-          taskId: activeTaskId,
-          sessionType: mode,
-          startTime,
-          endTime,
-          durationSeconds: sliceDuration,
-          completed: true,
-        });
-        await get().fetchTasks();
-      } catch (err) {
-        console.error('Failed to log completed session:', err);
-      }
+      set({ tasks: tasks.map((t) => (t.id === activeTaskId ? applyFocusSlice(t, sliceDuration) : t)) });
     }
 
     const nextMode: TimerMode = mode === 'FOCUS' ? 'SHORT_BREAK' : 'FOCUS';
@@ -1253,6 +1254,7 @@ export const useStore = create<StoreState>((set, get) => ({
       }
     }
 
+    // Transition before logging so a pause or skip during the request cannot log this slice again.
     set({
       mode: nextMode,
       durationSeconds: nextDur,
@@ -1274,6 +1276,22 @@ export const useStore = create<StoreState>((set, get) => ({
       activeTaskId: get().activeTaskId,
       focusRemainingByTask: updatedFocusRemaining,
     });
+
+    if (mode === 'FOCUS' && activeTaskId) {
+      try {
+        await api.sessions.log({
+          taskId: activeTaskId,
+          sessionType: mode,
+          startTime,
+          endTime,
+          durationSeconds: sliceDuration,
+          completed: true,
+        });
+        await get().fetchTasks();
+      } catch (err) {
+        console.error('Failed to log completed session:', err);
+      }
+    }
   },
 
   // Context Checkpoints
@@ -1354,3 +1372,5 @@ export const useStore = create<StoreState>((set, get) => ({
     set({ volume: vol });
   },
 }));
+
+setSessionExpiredHandler(() => useStore.getState().expireSession());

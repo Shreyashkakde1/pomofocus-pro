@@ -167,6 +167,29 @@ export const getClientTimezone = () => {
   }
 };
 
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+export const isAuthRejection = (err: unknown): boolean =>
+  err instanceof ApiError && (err.status === 401 || err.status === 403);
+
+// Endpoints whitelisted in SecurityConfig; their 401/403 responses (bad password,
+// unverified email) are not about an expired session.
+const PUBLIC_AUTH_ENDPOINTS = ['/auth/login', '/auth/signup', '/auth/verify-email', '/auth/resend-code', '/auth/demo'];
+
+let sessionExpiredHandler: (() => void) | null = null;
+
+export const setSessionExpiredHandler = (handler: (() => void) | null) => {
+  sessionExpiredHandler = handler;
+};
+
 async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('pomopro_token');
   const headers: Record<string, string> = {
@@ -192,7 +215,17 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
 
   if (!response.ok) {
     const errorMsg = data?.message || data?.error || `HTTP error ${response.status}`;
-    throw new Error(errorMsg);
+    const error = new ApiError(errorMsg, response.status);
+    // Only expire the session the request was sent with; a newer login must not be undone.
+    if (
+      token &&
+      isAuthRejection(error) &&
+      !PUBLIC_AUTH_ENDPOINTS.includes(endpoint) &&
+      localStorage.getItem('pomopro_token') === token
+    ) {
+      sessionExpiredHandler?.();
+    }
+    throw error;
   }
 
   return data as T;

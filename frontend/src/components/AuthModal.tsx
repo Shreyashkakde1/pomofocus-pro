@@ -10,6 +10,7 @@ export const AuthModal: React.FC = () => {
   const closeAuthModal = useStore((s) => s.closeAuthModal);
   const openAuthModal = useStore((s) => s.openAuthModal);
   const setAuth = useStore((s) => s.setAuth);
+  const authNotice = useStore((s) => s.authNotice);
 
   const [email, setEmail] = useState(pendingEmail || '');
   const [username, setUsername] = useState('');
@@ -137,6 +138,12 @@ export const AuthModal: React.FC = () => {
           <div className="mb-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start space-x-2.5">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
             <span>{error}</span>
+          </div>
+        )}
+        {authNotice && !error && !infoMessage && (
+          <div className="mb-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start space-x-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" />
+            <span>{authNotice}</span>
           </div>
         )}
         {infoMessage && (
