@@ -39,8 +39,19 @@ export const App: React.FC = () => {
       } catch (e) {}
     };
 
+    // After waking from sleep the first /auth/me can fail before the network is back;
+    // retry the stored session once connectivity returns instead of dropping it.
+    const handleOnline = () => {
+      const s = useStore.getState();
+      if (s.token && !s.user) loadCurrentUser();
+    };
+
     window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('online', handleOnline);
+    };
   }, [loadCurrentUser]);
 
   return (
