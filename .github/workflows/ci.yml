@@ -52,14 +52,18 @@ jobs:
       run:
         working-directory: ./backend
 
-    # Matches the datasource defaults in application.properties (localhost:5435/pomopro).
+    # Throwaway database for this run only; host, port and name match the
+    # application.properties defaults, and the password is generated per run.
+    env:
+      DB_PASS: ci-${{ github.run_id }}-${{ github.run_attempt }}
+
     services:
       postgres:
         image: postgres:16-alpine
         env:
           POSTGRES_DB: pomopro
           POSTGRES_USER: pomouser
-          POSTGRES_PASSWORD: pomopass
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
         ports:
           - 5435:5432
         options: >-
