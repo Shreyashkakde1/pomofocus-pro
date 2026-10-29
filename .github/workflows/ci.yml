@@ -52,18 +52,15 @@ jobs:
       run:
         working-directory: ./backend
 
-    # Throwaway database for this run only; host, port and name match the
-    # application.properties defaults, and the password is generated per run.
-    env:
-      DB_PASS: ci-${{ github.run_id }}-${{ github.run_attempt }}
-
+    # Throwaway database reachable only from this job. Host, port, name and user match
+    # the application.properties defaults; trust auth avoids storing any password here.
     services:
       postgres:
         image: postgres:16-alpine
         env:
           POSTGRES_DB: pomopro
           POSTGRES_USER: pomouser
-          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5435:5432
         options: >-
