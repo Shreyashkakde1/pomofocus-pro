@@ -43,14 +43,38 @@ export const App: React.FC = () => {
     // retry the stored session once connectivity returns instead of dropping it.
     const handleOnline = () => {
       const s = useStore.getState();
-      if (s.token && !s.user) loadCurrentUser();
+      if (s.token && !s.user) {
+        loadCurrentUser();
+      } else {
+        refreshFromServer();
+      }
     };
+
+    // Coming back to this tab must show what other devices saved in the meantime. Returning
+    // usually fires both events, so one refresh covers them.
+    let lastRefreshAt = 0;
+    const refreshFromServer = () => {
+      const s = useStore.getState();
+      if (!s.user || s.isRunning || Date.now() - lastRefreshAt < 2000) return;
+      lastRefreshAt = Date.now();
+      s.fetchTasks();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshFromServer();
+    };
+    const handlePageHide = () => useStore.getState().pauseForUnload();
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     window.addEventListener('online', handleOnline);
+    window.addEventListener('focus', refreshFromServer);
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('focus', refreshFromServer);
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [loadCurrentUser]);
 

@@ -17,6 +17,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   api: {
     sessions: { log: vi.fn() },
     tasks: { list: vi.fn() },
+    timerStates: { list: vi.fn(), save: vi.fn(), remove: vi.fn() },
     dailyTasks: { list: vi.fn() },
     auth: { me: vi.fn(), demoLogin: vi.fn() },
   },
@@ -33,6 +34,7 @@ vi.mock('../utils/notifications', () => ({
 import { api, ApiError } from '../api/client';
 import type { UserDto } from '../api/client';
 import { useStore, applyFocusSlice } from './useStore';
+import { clearPendingTimerOps, loadPendingTimerOps, queueTimerOp } from './timerSync';
 
 const makeTask = (id: string, dailyTargetMinutes: number): TaskDto => ({
   id,
@@ -176,6 +178,7 @@ describe('session restore and user isolation', () => {
     localStorage.clear();
     tasksMock.mockResolvedValue([]);
     dailyMock.mockResolvedValue([]);
+    (api.timerStates.list as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     useStore.setState({
       user: null,
       token: null,
@@ -270,5 +273,342 @@ describe('session restore and user isolation', () => {
     await fetching;
 
     expect(useStore.getState().tasks.find((t) => t.id === 'shreyash-target')).toBeUndefined();
+  });
+});
+
+describe('cross-device timer sync', () => {
+  const user = { id: 'u1', email: 'u@test', username: 'u' } as unknown as UserDto;
+  const listStates = api.timerStates.list as unknown as ReturnType<typeof vi.fn>;
+  const saveState = api.timerStates.save as unknown as ReturnType<typeof vi.fn>;
+  const removeState = api.timerStates.remove as unknown as ReturnType<typeof vi.fn>;
+  const listTasks = api.tasks.list as unknown as ReturnType<typeof vi.fn>;
+  const NOW = '2026-11-02T10:00:00.000Z';
+  const stateFor = (taskId: string, remainingSeconds: number, durationSeconds: number, updatedAt = NOW) => ({
+    taskId, remainingSeconds, durationSeconds, updatedAt,
+  });
+
+  // A browser that has never run this account's timer.
+  const freshBrowser = (tasks: TaskDto[]) => {
+    listTasks.mockResolvedValue(tasks);
+    useStore.setState({
+      user,
+      token: 't',
+      isAuthenticated: true,
+      activeTaskId: null,
+      mode: 'FOCUS',
+      isRunning: false,
+      durationSeconds: 1500,
+      remainingSeconds: 1500,
+      focusSliceStart: null,
+      sessionRemainingAtStart: null,
+      focusRemainingByTask: {},
+      fetchTasks: realFetchTasks,
+    });
+  };
+  const realFetchTasks = useStore.getState().fetchTasks;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    clearPendingTimerOps();
+    logMock.mockResolvedValue({});
+    listStates.mockResolvedValue([]);
+    saveState.mockResolvedValue(undefined);
+    removeState.mockResolvedValue(undefined);
+    // Accounts in these tests are not upgrading from local-only timers unless a test says so.
+    localStorage.setItem('pomopro_timer_states_uploaded_u1', '1');
+  });
+
+  it('shows the remaining time saved on another device instead of the full target', async () => {
+    freshBrowser([makeTask('side-hustle', 180)]);
+    listStates.mockResolvedValue([stateFor('side-hustle', 8400, 10800)]);
+
+    await useStore.getState().fetchTasks();
+
+    const s = useStore.getState();
+    expect(s.activeTaskId).toBe('side-hustle');
+    expect(s.remainingSeconds).toBe(8400);
+    expect(s.durationSeconds).toBe(10800);
+  });
+
+  it('opens the target most recently saved on another device', async () => {
+    freshBrowser([makeTask('a', 60), makeTask('b', 60)]);
+    listStates.mockResolvedValue([
+      stateFor('a', 100, 3600, '2026-11-02T09:00:00.000Z'),
+      stateFor('b', 200, 3600, '2026-11-02T10:00:00.000Z'),
+    ]);
+
+    await useStore.getState().fetchTasks();
+
+    expect(useStore.getState().activeTaskId).toBe('b');
+    expect(useStore.getState().remainingSeconds).toBe(200);
+  });
+
+  it('uses the full target when no device has saved progress', async () => {
+    freshBrowser([makeTask('a', 60)]);
+
+    await useStore.getState().fetchTasks();
+
+    expect(useStore.getState().remainingSeconds).toBe(3600);
+  });
+
+  it('picks up progress from another device when an idle browser refreshes', async () => {
+    freshBrowser([makeTask('a', 60)]);
+    useStore.setState({ activeTaskId: 'a', remainingSeconds: 3000, durationSeconds: 3600, focusRemainingByTask: { a: { remainingSeconds: 3000, durationSeconds: 3600 } } });
+    listStates.mockResolvedValue([stateFor('a', 1200, 3600)]);
+
+    await useStore.getState().fetchTasks();
+
+    expect(useStore.getState().remainingSeconds).toBe(1200);
+  });
+
+  it('returns to the full target after another device reset it', async () => {
+    freshBrowser([makeTask('a', 60)]);
+    useStore.setState({ activeTaskId: 'a', remainingSeconds: 3000, durationSeconds: 3600, focusRemainingByTask: { a: { remainingSeconds: 3000, durationSeconds: 3600 } } });
+
+    await useStore.getState().fetchTasks();
+
+    expect(useStore.getState().remainingSeconds).toBe(3600);
+    expect(useStore.getState().focusRemainingByTask.a).toBeUndefined();
+  });
+
+  it('does not touch a running clock', async () => {
+    freshBrowser([makeTask('a', 60)]);
+    useStore.setState({ activeTaskId: 'a', isRunning: true, remainingSeconds: 3000, durationSeconds: 3600 });
+    listStates.mockResolvedValue([stateFor('a', 1200, 3600)]);
+
+    await useStore.getState().fetchTasks();
+
+    expect(useStore.getState().remainingSeconds).toBe(3000);
+    expect(useStore.getState().isRunning).toBe(true);
+  });
+
+  it('keeps the old local state when the server cannot be reached', async () => {
+    freshBrowser([makeTask('a', 60)]);
+    useStore.setState({ activeTaskId: 'a', remainingSeconds: 3000, durationSeconds: 3600, focusRemainingByTask: { a: { remainingSeconds: 3000, durationSeconds: 3600 } } });
+    listStates.mockRejectedValue(new TypeError('offline'));
+
+    await useStore.getState().fetchTasks();
+
+    expect(useStore.getState().remainingSeconds).toBe(3000);
+  });
+
+  it('saves on pause, once, with the paused values', async () => {
+    loadDeck([makeTask('a', 180)], 'a');
+    useStore.setState({ user, token: 't' });
+    useStore.getState().startTimer();
+    tick(2400);
+
+    await useStore.getState().pauseTimer();
+
+    expect(saveState).toHaveBeenCalledTimes(1);
+    expect(saveState).toHaveBeenCalledWith('a', { remainingSeconds: 8400, durationSeconds: 10800 });
+  });
+
+  it('does not save when pausing a timer that is not running, or on every tick', async () => {
+    loadDeck([makeTask('a', 180)], 'a');
+    useStore.setState({ user, token: 't' });
+    await useStore.getState().pauseTimer();
+    expect(saveState).not.toHaveBeenCalled();
+
+    useStore.getState().startTimer();
+    tick(60);
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it('saves the outgoing target on a running hot-switch', async () => {
+    loadDeck([makeTask('a', 60), makeTask('b', 30)], 'a');
+    useStore.setState({ user, token: 't' });
+    useStore.getState().startTimer();
+    tick(600);
+
+    await useStore.getState().hotSwitchTask('b');
+
+    expect(saveState).toHaveBeenCalledWith('a', { remainingSeconds: 3000, durationSeconds: 3600 });
+  });
+
+  it('deletes the saved state on reset', async () => {
+    loadDeck([makeTask('a', 1)], 'a');
+    useStore.setState({ user, token: 't' });
+
+    useStore.getState().resetTimer();
+
+    await vi.waitFor(() => expect(removeState).toHaveBeenCalledWith('a'));
+  });
+
+  it('deletes the saved state when a block completes', async () => {
+    loadDeck([makeTask('a', 1)], 'a');
+    useStore.setState({ user, token: 't' });
+    useStore.getState().startTimer();
+    tick(60);
+
+    await useStore.getState().onTimerComplete();
+
+    await vi.waitFor(() => expect(removeState).toHaveBeenCalledWith('a'));
+  });
+
+  it('keeps an unsent change over the server and sends it on the next refresh', async () => {
+    loadDeck([makeTask('a', 60)], 'a');
+    useStore.setState({ user, token: 't' });
+    saveState.mockRejectedValueOnce(new TypeError('offline'));
+    useStore.getState().startTimer();
+    tick(600);
+    await useStore.getState().pauseTimer();
+    await vi.waitFor(() => expect(saveState).toHaveBeenCalledTimes(1));
+
+    useStore.setState({ fetchTasks: realFetchTasks });
+    listTasks.mockResolvedValue([makeTask('a', 60)]);
+    listStates.mockResolvedValue([stateFor('a', 3500, 3600, '2020-01-01T00:00:00.000Z')]);
+    await vi.waitFor(() => expect(loadPendingTimerOps('u1').a).toBeDefined());
+    await useStore.getState().fetchTasks();
+
+    expect(useStore.getState().remainingSeconds).toBe(3000);
+    expect(saveState).toHaveBeenLastCalledWith('a', { remainingSeconds: 3000, durationSeconds: 3600 });
+    expect(loadPendingTimerOps('u1').a).toBeUndefined();
+  });
+
+  it('drops a change rejected by the server instead of retrying forever', async () => {
+    loadDeck([makeTask('a', 60)], 'a');
+    useStore.setState({ user, token: 't' });
+    saveState.mockRejectedValueOnce(new ApiError('gone', 404));
+    useStore.getState().startTimer();
+    tick(60);
+    await useStore.getState().pauseTimer();
+
+    await vi.waitFor(() => expect(loadPendingTimerOps('u1').a).toBeUndefined());
+  });
+
+  it('never applies or sends another account\'s unsent changes', async () => {
+    queueTimerOp('someone-else', 'a', { remainingSeconds: 5, durationSeconds: 10 });
+    freshBrowser([makeTask('a', 60)]);
+
+    await useStore.getState().fetchTasks();
+
+    expect(useStore.getState().remainingSeconds).toBe(3600);
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it('clears unsent changes on logout', () => {
+    queueTimerOp('u1', 'a', { remainingSeconds: 5, durationSeconds: 10 });
+    useStore.getState().logout();
+    expect(loadPendingTimerOps('u1')).toEqual({});
+  });
+
+  it('uploads local-only progress once for a browser upgrading to server sync', async () => {
+    localStorage.removeItem('pomopro_timer_states_uploaded_u1');
+    freshBrowser([makeTask('a', 60), makeTask('b', 60)]);
+    useStore.setState({
+      activeTaskId: 'a',
+      focusRemainingByTask: {
+        a: { remainingSeconds: 3000, durationSeconds: 3600 },
+        b: { remainingSeconds: 1000, durationSeconds: 3600 },
+      },
+    });
+    listStates.mockResolvedValue([stateFor('b', 500, 3600)]);
+
+    await useStore.getState().fetchTasks();
+
+    expect(saveState).toHaveBeenCalledTimes(1);
+    expect(saveState).toHaveBeenCalledWith('a', { remainingSeconds: 3000, durationSeconds: 3600 });
+    expect(useStore.getState().remainingSeconds).toBe(3000);
+    expect(useStore.getState().focusRemainingByTask.b.remainingSeconds).toBe(500);
+
+    saveState.mockClear();
+    listStates.mockResolvedValue([stateFor('b', 500, 3600)]);
+    useStore.setState({ focusRemainingByTask: { a: { remainingSeconds: 3000, durationSeconds: 3600 } } });
+    await useStore.getState().fetchTasks();
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it('keeps timer progress when only the title changes, and resets it for a new budget', async () => {
+    loadDeck([makeTask('a', 60)], 'a');
+    (api.tasks as any).update = vi.fn().mockImplementation(async (_id, body) => ({ ...makeTask('a', body.dailyTargetMinutes), title: body.title }));
+    useStore.setState({ user, token: 't', remainingSeconds: 3000, durationSeconds: 3600, focusRemainingByTask: { a: { remainingSeconds: 3000, durationSeconds: 3600 } } });
+
+    await useStore.getState().updateTask('a', 'renamed', 'General', '#000', 60);
+    expect(useStore.getState().remainingSeconds).toBe(3000);
+    expect(removeState).not.toHaveBeenCalled();
+
+    await useStore.getState().updateTask('a', 'renamed', 'General', '#000', 90);
+    expect(useStore.getState().remainingSeconds).toBe(5400);
+    await vi.waitFor(() => expect(removeState).toHaveBeenCalledWith('a'));
+  });
+
+  describe('reload or tab close', () => {
+    const runFor = (seconds: number) => {
+      loadDeck([makeTask('a', 180)], 'a');
+      useStore.setState({ user, token: 't', remainingSeconds: 8400, durationSeconds: 10800 });
+      useStore.getState().startTimer();
+      tick(seconds);
+    };
+
+    it('sends the timer state and the slice with keepalive, and stays paused', () => {
+      runFor(600);
+
+      useStore.getState().pauseForUnload();
+
+      expect(saveState).toHaveBeenCalledWith('a', { remainingSeconds: 7800, durationSeconds: 10800 }, { keepalive: true });
+      expect(logMock).toHaveBeenCalledTimes(1);
+      expect(logMock.mock.calls[0][0]).toMatchObject({ taskId: 'a', durationSeconds: 600, completed: false });
+      expect(logMock.mock.calls[0][1]).toEqual({ keepalive: true });
+      expect(useStore.getState().isRunning).toBe(false);
+      expect(useStore.getState().tasks[0].todayFocusSeconds).toBe(600);
+    });
+
+    it('sends nothing more on a repeated pagehide', () => {
+      runFor(600);
+      useStore.getState().pauseForUnload();
+      useStore.getState().pauseForUnload();
+      expect(saveState).toHaveBeenCalledTimes(1);
+      expect(logMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends nothing when paused or on a break', () => {
+      loadDeck([makeTask('a', 180)], 'a');
+      useStore.setState({ user, token: 't' });
+      useStore.getState().pauseForUnload();
+
+      useStore.setState({ mode: 'SHORT_BREAK', isRunning: true });
+      useStore.getState().pauseForUnload();
+
+      expect(saveState).not.toHaveBeenCalled();
+      expect(logMock).not.toHaveBeenCalled();
+    });
+
+    it('re-sends a lost timer state on the next load, and local beats the older server value', async () => {
+      runFor(600);
+      saveState.mockRejectedValueOnce(new TypeError('page closed'));
+      useStore.getState().pauseForUnload();
+      await vi.waitFor(() => expect(saveState).toHaveBeenCalledTimes(1));
+      logMock.mockClear();
+
+      useStore.setState({ fetchTasks: realFetchTasks });
+      listTasks.mockResolvedValue([makeTask('a', 180)]);
+      listStates.mockResolvedValue([stateFor('a', 8400, 10800, '2020-01-01T00:00:00.000Z')]);
+      await useStore.getState().fetchTasks();
+
+      expect(useStore.getState().remainingSeconds).toBe(7800);
+      expect(useStore.getState().isRunning).toBe(false);
+      expect(saveState).toHaveBeenCalledTimes(2);
+      expect(saveState).toHaveBeenLastCalledWith('a', { remainingSeconds: 7800, durationSeconds: 10800 });
+      expect(logMock).not.toHaveBeenCalled();
+    });
+
+    it('does not overwrite newer progress from another device with a write that was already delivered', async () => {
+      runFor(600);
+      useStore.getState().pauseForUnload();
+      // The page died before the response, so the write is still queued on reopen.
+      queueTimerOp('u1', 'a', { remainingSeconds: 7800, durationSeconds: 10800 });
+      saveState.mockClear();
+
+      useStore.setState({ fetchTasks: realFetchTasks });
+      listTasks.mockResolvedValue([makeTask('a', 180)]);
+      listStates.mockResolvedValue([stateFor('a', 6000, 10800, new Date(Date.now() + 60000).toISOString())]);
+      await useStore.getState().fetchTasks();
+
+      expect(saveState).not.toHaveBeenCalled();
+      expect(useStore.getState().remainingSeconds).toBe(6000);
+      expect(loadPendingTimerOps('u1')).toEqual({});
+    });
   });
 });

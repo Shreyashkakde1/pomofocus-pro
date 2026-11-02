@@ -149,6 +149,13 @@ export interface DailyTrendItem {
   completionPercentage: number;
 }
 
+export interface TimerStateDto {
+  taskId: string;
+  remainingSeconds: number;
+  durationSeconds: number;
+  updatedAt: string;
+}
+
 export interface WeeklyReportDto {
   startDate: string;
   endDate: string;
@@ -259,10 +266,19 @@ export const api = {
   },
 
   sessions: {
-    log: (body: { taskId?: string; sessionType: string; startTime: string; endTime: string; durationSeconds: number; completed: boolean }) =>
-      apiRequest<SessionDto>('/sessions', { method: 'POST', body: JSON.stringify(body) }),
+    log: (body: { taskId?: string; sessionType: string; startTime: string; endTime: string; durationSeconds: number; completed: boolean }, options: RequestInit = {}) =>
+      apiRequest<SessionDto>('/sessions', { ...options, method: 'POST', body: JSON.stringify(body) }),
     recent: () =>
       apiRequest<SessionDto[]>('/sessions/recent'),
+  },
+
+  timerStates: {
+    list: () =>
+      apiRequest<TimerStateDto[]>('/timer-states'),
+    save: (taskId: string, body: { remainingSeconds: number; durationSeconds: number }, options: RequestInit = {}) =>
+      apiRequest<void>(`/timer-states/${taskId}`, { ...options, method: 'PUT', body: JSON.stringify(body) }),
+    remove: (taskId: string) =>
+      apiRequest<void>(`/timer-states/${taskId}`, { method: 'DELETE' }),
   },
 
   checkpoints: {
