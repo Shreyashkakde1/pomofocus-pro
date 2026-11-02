@@ -10,9 +10,24 @@ import type {
   PriorityTier,
   CreateDailyTaskRequest,
   SaveDailyDebriefRequest,
+  TimerStateDto,
 } from '../api/client';
 import { soundEffects } from '../utils/soundEffects';
 import { notifications } from '../utils/notifications';
+import {
+  claimLocalProgressUpload,
+  clearPendingTimerOps,
+  clearTimerOp,
+  dropSupersededTimerOps,
+  flushPendingTimerOps,
+  getTimerOpVersion,
+  loadPendingTimerOps,
+  mergeFocusRemaining,
+  pickActiveTaskId,
+  queueTimerOp,
+  resolveTaskProgress,
+} from './timerSync';
+import type { TimerProgress } from './timerSync';
 
 export type TimerMode = 'FOCUS' | 'SHORT_BREAK' | 'LONG_BREAK';
 
@@ -38,6 +53,7 @@ interface StoreState {
   activeTaskId: string | null;
   isLoadingTasks: boolean;
   fetchTasks: () => Promise<void>;
+  fetchTimerStates: () => Promise<void>;
   setActiveTaskId: (id: string | null) => void;
   createTask: (title: string, category: string, colorHex: string, targetMinutes: number) => Promise<void>;
   updateTask: (id: string, title: string, category: string, colorHex: string, targetMinutes: number) => Promise<void>;
@@ -94,6 +110,7 @@ interface StoreState {
   hotSwitchTask: (newTaskId: string) => Promise<void>;
   skipTimer: () => Promise<void>;
   onTimerComplete: () => Promise<void>;
+  pauseForUnload: () => void;
 
   // Context Checkpoints
   isCheckpointPromptOpen: boolean;
@@ -199,6 +216,7 @@ const normalizeDailyTask = (task: any): DailyTaskDto => ({
 // State that belongs to the signed-in account. Reset whenever the account changes so
 // targets, plans, timer progress and reports never carry over to another user.
 const clearUserScopedState = (focusSeconds: number) => {
+  clearPendingTimerOps();
   try {
     localStorage.removeItem('pomopro_active_timer');
   } catch {
@@ -239,6 +257,30 @@ export const applyFocusSlice = (task: TaskDto, sliceSeconds: number): TaskDto =>
     progressPercentage: progress,
     deficitOrSurplusMinutes: newMins - task.dailyTargetMinutes,
   };
+};
+
+// Seconds of the running slice, from the same snapshot that stops it.
+const computeSliceSeconds = (state: {
+  sessionRemainingAtStart: number | null;
+  durationSeconds: number;
+  remainingSeconds: number;
+  focusSliceStart: string | null;
+}) => {
+  const startRem = state.sessionRemainingAtStart ?? state.durationSeconds;
+  const timerElapsed = Math.max(0, startRem - state.remainingSeconds);
+  const wallElapsed = state.focusSliceStart
+    ? Math.max(0, Math.round((Date.now() - new Date(state.focusSliceStart).getTime()) / 1000))
+    : 0;
+  return timerElapsed > 0 ? timerElapsed : wallElapsed;
+};
+
+// Record a target's timer progress for other devices without blocking the caller.
+// `progress` null, or nothing left to resume, removes the saved state.
+const syncTimerProgress = (taskId: string, progress: TimerProgress | null) => {
+  const userId = useStore.getState().user?.id;
+  if (!userId) return;
+  queueTimerOp(userId, taskId, progress && progress.remainingSeconds > 0 ? progress : null);
+  void flushPendingTimerOps(userId);
 };
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -339,50 +381,74 @@ export const useStore = create<StoreState>((set, get) => ({
       // Drop a response that belongs to a session which ended while it was in flight.
       if (get().token !== requestToken) return;
       set({ tasks });
-      if (tasks.length > 0) {
-        const currentActive = get().activeTaskId ? tasks.find((t) => t.id === get().activeTaskId) : null;
-        if (!get().isRunning && !currentActive) {
-          const activeTask = tasks[0];
-          const targetSecs = (activeTask.dailyTargetMinutes || 25) * 60;
-
-          const savedFocus = get().focusRemainingByTask[activeTask.id];
-          const remaining = (savedFocus && savedFocus.remainingSeconds > 0)
-            ? savedFocus.remainingSeconds
-            : targetSecs;
-          const dur = (savedFocus && savedFocus.durationSeconds > 0)
-            ? savedFocus.durationSeconds
-            : targetSecs;
-
-          set({
-            activeTaskId: activeTask.id,
-            ...(get().mode === 'FOCUS'
-              ? {
-                  durationSeconds: dur,
-                  remainingSeconds: remaining,
-                  timerDurations: {
-                    ...get().timerDurations,
-                    FOCUS: dur,
-                  },
-                }
-              : {}),
-          });
-
-          if (get().mode === 'FOCUS') {
-            persistTimerState({
-              mode: 'FOCUS',
-              durationSeconds: dur,
-              remainingSeconds: remaining,
-              activeTaskId: activeTask.id,
-              focusRemainingByTask: get().focusRemainingByTask,
-            });
-          }
-        }
-      }
+      await get().fetchTimerStates();
     } catch (err) {
       console.error('Error fetching tasks:', err);
     } finally {
       set({ isLoadingTasks: false });
     }
+  },
+
+  fetchTimerStates: async () => {
+    const requestToken = get().token;
+    const userId = get().user?.id;
+    let states: TimerStateDto[] | null = null;
+
+    if (userId) {
+      try {
+        states = await api.timerStates.list();
+        if (get().token !== requestToken) return;
+        dropSupersededTimerOps(userId, states);
+        if (claimLocalProgressUpload(userId)) {
+          const onServer = new Set(states.map((s) => s.taskId));
+          for (const task of get().tasks) {
+            const local = get().focusRemainingByTask[task.id];
+            if (local && !onServer.has(task.id)) queueTimerOp(userId, task.id, local);
+          }
+        }
+      } catch (err) {
+        // Offline or server failure: keep working from this browser's last known state.
+        console.error('Error fetching timer states:', err);
+        states = null;
+      }
+    }
+
+    const version = getTimerOpVersion();
+    const focusRemaining = states && userId
+      ? mergeFocusRemaining(states, loadPendingTimerOps(userId))
+      : get().focusRemainingByTask;
+    if (states && userId) {
+      await flushPendingTimerOps(userId);
+      if (get().token !== requestToken) return;
+    }
+
+    // Never disturb a running clock, and a timer change made during the requests is newer
+    // than this response. Either way the next refresh picks up the server state.
+    if (get().isRunning || getTimerOpVersion() !== version) return;
+
+    const tasks = get().tasks;
+    const activeTaskId = pickActiveTaskId(tasks, get().activeTaskId, states ?? []);
+    const activeTask = tasks.find((t) => t.id === activeTaskId);
+    const progress = activeTask && get().mode === 'FOCUS' ? resolveTaskProgress(activeTask, focusRemaining) : null;
+
+    set({
+      focusRemainingByTask: focusRemaining,
+      ...(activeTask ? { activeTaskId: activeTask.id } : {}),
+      ...(progress
+        ? {
+            ...progress,
+            timerDurations: { ...get().timerDurations, FOCUS: progress.durationSeconds },
+          }
+        : {}),
+    });
+
+    persistTimerState({
+      mode: get().mode,
+      remainingSeconds: get().remainingSeconds,
+      durationSeconds: get().durationSeconds,
+      activeTaskId: get().activeTaskId,
+      focusRemainingByTask: focusRemaining,
+    });
   },
 
   setActiveTaskId: (id) => {
@@ -482,12 +548,18 @@ export const useStore = create<StoreState>((set, get) => ({
         colorHex,
         dailyTargetMinutes: targetMinutes,
       });
+      const budgetChanged = get().tasks.find((t) => t.id === id)?.dailyTargetMinutes !== targetMinutes;
       const tasks = get().tasks.map((t) => (t.id === id ? updated : t));
       const targetSecs = targetMinutes * 60;
       const isTargetActive = get().activeTaskId === id;
+      const isClockOnTarget = isTargetActive && get().isRunning;
+      // Only a new budget restarts the timer; renaming or recoloring keeps its progress.
+      const resetProgress = budgetChanged && !isClockOnTarget;
+      const { [id]: _staleProgress, ...remainingWithoutTask } = get().focusRemainingByTask;
       set({
         tasks,
-        ...(isTargetActive && get().mode === 'FOCUS' && !get().isRunning
+        ...(resetProgress ? { focusRemainingByTask: remainingWithoutTask } : {}),
+        ...(resetProgress && isTargetActive && get().mode === 'FOCUS'
           ? {
               durationSeconds: targetSecs,
               remainingSeconds: targetSecs,
@@ -498,6 +570,16 @@ export const useStore = create<StoreState>((set, get) => ({
             }
           : {}),
       });
+      if (resetProgress) {
+        persistTimerState({
+          mode: get().mode,
+          remainingSeconds: get().remainingSeconds,
+          durationSeconds: get().durationSeconds,
+          activeTaskId: get().activeTaskId,
+          focusRemainingByTask: remainingWithoutTask,
+        });
+        syncTimerProgress(id, null);
+      }
     } catch (err) {
       console.error('Failed to update task:', err);
       throw err;
@@ -755,6 +837,9 @@ export const useStore = create<StoreState>((set, get) => ({
         activeTaskId: get().activeTaskId,
         focusRemainingByTask: updates.focusRemainingByTask || get().focusRemainingByTask,
       });
+      if (get().activeTaskId) {
+        syncTimerProgress(get().activeTaskId!, { remainingSeconds: durationSeconds, durationSeconds });
+      }
     }
     set(updates);
   },
@@ -791,6 +876,7 @@ export const useStore = create<StoreState>((set, get) => ({
     soundEffects.stopTimerAlarm();
     const prevMode = get().mode;
     const activeTaskId = get().activeTaskId;
+    const wasRunningFocus = prevMode === 'FOCUS' && get().isRunning;
 
     // When leaving FOCUS mode, remember the current remaining & duration for this task!
     let updatedFocusRemaining = { ...get().focusRemainingByTask };
@@ -842,6 +928,10 @@ export const useStore = create<StoreState>((set, get) => ({
       activeTaskId: get().activeTaskId,
       focusRemainingByTask: updatedFocusRemaining,
     });
+
+    if (wasRunningFocus && activeTaskId) {
+      syncTimerProgress(activeTaskId, updatedFocusRemaining[activeTaskId] ?? null);
+    }
   },
 
   setIsRunning: (running) => set({ isRunning: running }),
@@ -893,10 +983,7 @@ export const useStore = create<StoreState>((set, get) => ({
     const { isRunning, focusSliceStart, sessionRemainingAtStart, remainingSeconds, durationSeconds, activeTaskId, mode, tasks, focusRemainingByTask } = get();
 
     // Calculate actual elapsed seconds in this focus slice
-    const startRem = sessionRemainingAtStart ?? durationSeconds;
-    const timerElapsed = Math.max(0, startRem - remainingSeconds);
-    const wallElapsed = focusSliceStart ? Math.max(0, Math.round((Date.now() - new Date(focusSliceStart).getTime()) / 1000)) : 0;
-    const sliceDuration = timerElapsed > 0 ? timerElapsed : wallElapsed;
+    const sliceDuration = computeSliceSeconds({ sessionRemainingAtStart, durationSeconds, remainingSeconds, focusSliceStart });
 
     let updatedFocusRemaining = focusRemainingByTask;
     if (mode === 'FOCUS' && activeTaskId) {
@@ -930,6 +1017,10 @@ export const useStore = create<StoreState>((set, get) => ({
       activeTaskId,
       focusRemainingByTask: updatedFocusRemaining,
     });
+
+    if (isRunning && mode === 'FOCUS' && activeTaskId) {
+      syncTimerProgress(activeTaskId, { remainingSeconds, durationSeconds });
+    }
 
     if (shouldLog) {
       const startTime = focusSliceStart || new Date(Date.now() - sliceDuration * 1000).toISOString();
@@ -1000,6 +1091,10 @@ export const useStore = create<StoreState>((set, get) => ({
       activeTaskId,
       focusRemainingByTask: updatedFocusRemaining,
     });
+
+    if (mode === 'FOCUS' && activeTaskId) {
+      syncTimerProgress(activeTaskId, null);
+    }
   },
 
   adjustTime: (deltaSeconds) => {
@@ -1040,6 +1135,10 @@ export const useStore = create<StoreState>((set, get) => ({
         })
       );
     }
+
+    if (!get().isRunning && get().mode === 'FOCUS' && get().activeTaskId) {
+      syncTimerProgress(get().activeTaskId!, { remainingSeconds: next, durationSeconds: dur });
+    }
   },
 
   hotSwitchTask: async (newTaskId) => {
@@ -1049,6 +1148,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
     soundEffects.playHotSwitchClick();
 
+    const outgoingDuration = get().durationSeconds;
     const prevTask = tasks.find((t) => t.id === activeTaskId);
     const nextTask = tasks.find((t) => t.id === newTaskId);
 
@@ -1110,6 +1210,10 @@ export const useStore = create<StoreState>((set, get) => ({
           detail: { remainingSeconds: nextRem, durationSeconds: nextDur },
         })
       );
+    }
+
+    if (isRunning && mode === 'FOCUS' && activeTaskId) {
+      syncTimerProgress(activeTaskId, { remainingSeconds, durationSeconds: outgoingDuration });
     }
 
     if (sliceDuration > 0 && activeTaskId) {
@@ -1197,6 +1301,10 @@ export const useStore = create<StoreState>((set, get) => ({
       focusRemainingByTask: updatedFocusRemaining,
     });
 
+    if (isRunning && mode === 'FOCUS' && activeTaskId) {
+      syncTimerProgress(activeTaskId, { remainingSeconds, durationSeconds });
+    }
+
     if (sliceDuration > 0 && activeTaskId) {
       try {
         await api.sessions.log({
@@ -1278,6 +1386,7 @@ export const useStore = create<StoreState>((set, get) => ({
     });
 
     if (mode === 'FOCUS' && activeTaskId) {
+      syncTimerProgress(activeTaskId, null);
       try {
         await api.sessions.log({
           taskId: activeTaskId,
@@ -1291,6 +1400,52 @@ export const useStore = create<StoreState>((set, get) => ({
       } catch (err) {
         console.error('Failed to log completed session:', err);
       }
+    }
+  },
+
+  // A reload or closed tab counts as a pause, so the server, the deck and other devices
+  // agree on the time worked. Stopping the clock here also makes a repeat call a no-op.
+  pauseForUnload: () => {
+    const { isRunning, mode, activeTaskId, user, tasks, focusSliceStart, sessionRemainingAtStart, remainingSeconds, durationSeconds, focusRemainingByTask } = get();
+    if (!isRunning || mode !== 'FOCUS' || !activeTaskId || !user) return;
+
+    const sliceDuration = computeSliceSeconds({ sessionRemainingAtStart, durationSeconds, remainingSeconds, focusSliceStart });
+    const progress = { remainingSeconds, durationSeconds };
+    const updatedFocusRemaining = { ...focusRemainingByTask, [activeTaskId]: progress };
+
+    set({
+      isRunning: false,
+      focusSliceStart: null,
+      sessionRemainingAtStart: null,
+      focusRemainingByTask: updatedFocusRemaining,
+      ...(sliceDuration > 0
+        ? { tasks: tasks.map((t) => (t.id === activeTaskId ? applyFocusSlice(t, sliceDuration) : t)) }
+        : {}),
+    });
+    persistTimerState({ mode, remainingSeconds, durationSeconds, activeTaskId, focusRemainingByTask: updatedFocusRemaining });
+
+    // The page may die before a response, so the write stays queued for the next load.
+    if (remainingSeconds > 0) {
+      queueTimerOp(user.id, activeTaskId, progress);
+      const op = loadPendingTimerOps(user.id)[activeTaskId];
+      api.timerStates.save(activeTaskId, progress, { keepalive: true })
+        .then(() => clearTimerOp(user.id, activeTaskId, op))
+        .catch(() => {});
+    }
+
+    // Sent once only: /sessions has no idempotency key, so a retry could double count.
+    if (sliceDuration > 0) {
+      api.sessions.log(
+        {
+          taskId: activeTaskId,
+          sessionType: mode,
+          startTime: focusSliceStart || new Date(Date.now() - sliceDuration * 1000).toISOString(),
+          endTime: new Date().toISOString(),
+          durationSeconds: sliceDuration,
+          completed: false,
+        },
+        { keepalive: true }
+      ).catch(() => {});
     }
   },
 

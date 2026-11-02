@@ -65,4 +65,19 @@ describe('API client session expiry', () => {
 
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer my-token');
   });
+
+  it('sends keepalive unload requests with the token', async () => {
+    localStorage.setItem('pomopro_token', 'my-token');
+    const fetchMock = respond(204);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.timerStates.save('a', { remainingSeconds: 7800, durationSeconds: 10800 }, { keepalive: true });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/timer-states/a');
+    expect(init.method).toBe('PUT');
+    expect(init.keepalive).toBe(true);
+    expect(init.headers.Authorization).toBe('Bearer my-token');
+    expect(JSON.parse(init.body)).toEqual({ remainingSeconds: 7800, durationSeconds: 10800 });
+  });
 });
